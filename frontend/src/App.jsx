@@ -15,6 +15,7 @@ import {
   History,
   ShieldCheck,
   ShieldAlert,
+  Award,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast, ToastContainer } from "react-toastify";
@@ -34,6 +35,7 @@ export default function App() {
   });
   const [hourlySchedule, setHourlySchedule] = useState([]);
   const [gateAssignment, setGateAssignment] = useState(null);
+  const [weeklyDuty, setWeeklyDuty] = useState(null);
   const [auditLog, setAuditLog] = useState(null);
   const [allNames, setAllNames] = useState([]);
   const [absences, setAbsences] = useState([]);
@@ -65,12 +67,14 @@ export default function App() {
 
         setHourlySchedule(result.hourly || []);
         setGateAssignment(result.gate || null);
+        setWeeklyDuty(result.weeklyDuty || null);
         setAuditLog(result.audit || null);
         setAbsences(result.absences || []);
       } catch (error) {
         toast.error(error.message);
         setHourlySchedule([]);
         setGateAssignment(null);
+        setWeeklyDuty(null);
         setAuditLog(null);
         setAbsences([]);
       } finally {
@@ -439,6 +443,39 @@ export default function App() {
                 <div className="text-center py-8 text-gray-500 bg-gray-700/50 rounded-lg">
                   <ServerCrash className="mx-auto h-10 w-10 mb-2" />
                   <p>لا يمكن تحديد دوام البوابة.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Weekly Duty Section */}
+            <div className="pt-4">
+              <h2 className="text-2xl font-bold mb-4 flex items-center gap-3">
+                <Award className="h-7 w-7 text-gray-400" />
+                <span>مناوبة الأسبوع</span>
+              </h2>
+              {isFetching ? (
+                <div className="flex justify-center items-center h-32">
+                  <Loader className="animate-spin h-8 w-8 text-blue-500" />
+                </div>
+              ) : weeklyDuty ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="bg-gray-700 rounded-lg p-6 text-center"
+                >
+                  <div>
+                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
+                      المناوب لهذه الفترة (من الأحد إلى السبت)
+                    </h3>
+                    <p className="text-4xl font-bold font-tajawal text-white mt-2">
+                      {weeklyDuty.name}
+                    </p>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="text-center py-8 text-gray-500 bg-gray-700/50 rounded-lg">
+                  <ServerCrash className="mx-auto h-10 w-10 mb-2" />
+                  <p>لا يمكن تحديد المناوب الأسبوعي.</p>
                 </div>
               )}
             </div>
