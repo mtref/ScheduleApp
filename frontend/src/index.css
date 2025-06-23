@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-ExtraBold.ttf") format("truetype");
+  font-weight: 800;
+}
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-Black.ttf") format("truetype");
+  font-weight: 900;
+}
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-Medium.ttf") format("truetype");
+  font-weight: 500;
+}
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-Light.ttf") format("truetype");
+  font-weight: 300;
+}
+@font-face {
+  font-family: "Tajawal";
+  src: url("./fonts/Tajawal/Tajawal-ExtraLight.ttf") format("truetype");
+  font-weight: 200;
+}
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-ExtraLight.ttf") format("truetype");
+  font-weight: 200;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-Light.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-ExtraBold.ttf") format("truetype");
+  font-weight: 800;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-Black.ttf") format("truetype");
+  font-weight: 900;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-LightItalic.ttf") format("truetype");
+  font-weight: 300;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: "Zain";
+  src: url("./fonts/Zain/Zain-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "El Messiri";
+  src: url("./fonts/El_Messiri/ElMessiri-VariableFont_wght.ttf")
+    format("truetype");
+  font-weight: 100 900; /* variable range */
+  font-style: normal;
+}
+body {
+  font-family: "El Messiri", sans-serif !important;
+}
