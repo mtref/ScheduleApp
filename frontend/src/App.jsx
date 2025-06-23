@@ -13,10 +13,15 @@ import {
   Shuffle,
   Edit,
   History,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast, ToastContainer } from "react-toastify";
 import dayjs from "dayjs";
+import "dayjs/locale/ar";
+
+dayjs.locale("ar");
 
 const formatDateForApi = (date) => dayjs(date).format("YYYY-MM-DD");
 
@@ -27,17 +32,15 @@ export default function App() {
     startDate: new Date(),
     endDate: new Date(),
   });
-  const [schedule, setSchedule] = useState({
-    date: null,
-    data: [],
-    audit: null,
-  });
+  const [hourlySchedule, setHourlySchedule] = useState([]);
+  const [gateAssignment, setGateAssignment] = useState(null);
+  const [auditLog, setAuditLog] = useState(null);
   const [allNames, setAllNames] = useState([]);
   const [absences, setAbsences] = useState([]);
   const [newName, setNewName] = useState("");
   const [isFetching, setIsFetching] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isNamesModalOpen, setIsNamesModalOpen] = useState(false);
+  const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
   const [isShuffleModalOpen, setIsShuffleModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState(null);
@@ -56,26 +59,19 @@ export default function App() {
       setIsFetching(true);
       try {
         const dateStr = formatDateForApi(selectedDate.startDate);
-        const [scheduleRes, absencesRes] = await Promise.all([
-          fetch(`/api/schedule?date=${dateStr}`),
-          fetch(`/api/absences?date=${dateStr}`),
-        ]);
+        const res = await fetch(`/api/daily-data?date=${dateStr}`);
+        if (!res.ok) throw new Error("Failed to fetch daily data.");
+        const result = await res.json();
 
-        if (!scheduleRes.ok) throw new Error("Failed to fetch schedule.");
-        if (!absencesRes.ok) throw new Error("Failed to fetch absences.");
-
-        const scheduleResult = await scheduleRes.json();
-        const absencesResult = await absencesRes.json();
-
-        setSchedule(scheduleResult);
-        setAbsences(absencesResult.data || []);
+        setHourlySchedule(result.hourly || []);
+        setGateAssignment(result.gate || null);
+        setAuditLog(result.audit || null);
+        setAbsences(result.absences || []);
       } catch (error) {
         toast.error(error.message);
-        setSchedule({
-          date: formatDateForApi(selectedDate.startDate),
-          data: [],
-          audit: null,
-        });
+        setHourlySchedule([]);
+        setGateAssignment(null);
+        setAuditLog(null);
         setAbsences([]);
       } finally {
         setIsFetching(false);
@@ -96,10 +92,10 @@ export default function App() {
         toast.error(error.message);
       }
     };
-    if (isNamesModalOpen || isEditModalOpen) {
+    if (isRosterModalOpen || isEditModalOpen) {
       fetchMasterNames();
     }
-  }, [isNamesModalOpen, isEditModalOpen]);
+  }, [isRosterModalOpen, isEditModalOpen]);
 
   useEffect(() => {
     const timerId = setInterval(() => setCurrentTime(new Date()), 30000);
@@ -119,20 +115,8 @@ export default function App() {
 
   const displaySchedule = useMemo(() => {
     const currentHour = dayjs(currentTime).hour();
-    const selectedDateStr = formatDateForApi(selectedDate.startDate);
-
-    if (schedule.date !== selectedDateStr) {
-      return timeSlots.map((time) => ({
-        time,
-        isAssigned: false,
-        assignment: null,
-        isCurrent: isTodaySelected && currentHour === time,
-      }));
-    }
-
-    const assignments = schedule.data || [];
     return timeSlots.map((time) => {
-      const assignment = assignments.find((s) => s.scheduled_time === time);
+      const assignment = hourlySchedule.find((s) => s.scheduled_time === time);
       return {
         time,
         isAssigned: !!assignment,
@@ -140,7 +124,7 @@ export default function App() {
         isCurrent: isTodaySelected && currentHour === time,
       };
     });
-  }, [schedule, timeSlots, currentTime, selectedDate, isTodaySelected]);
+  }, [hourlySchedule, timeSlots, currentTime, isTodaySelected]);
 
   // --- Event Handlers ---
   const handleAddName = async (e) => {
@@ -153,7 +137,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newName.trim() }),
       });
-      toast.success(`'${newName}' added to the roster!`);
+      toast.success(`'${newName}' added to roster!`);
       setNewName("");
     } catch (error) {
       toast.error(error.message);
@@ -215,7 +199,8 @@ export default function App() {
       });
       if (!res.ok) throw new Error("Failed to regenerate schedule.");
       const result = await res.json();
-      setSchedule(result);
+      setHourlySchedule(result.hourly || []);
+      setAuditLog(result.audit || null);
       toast.success("تمت إعادة توزيع الجدول بنجاح!");
     } catch (error) {
       toast.error(error.message);
@@ -235,10 +220,8 @@ export default function App() {
     const newNameId = formData.get("newName");
     const reason = formData.get("reason");
 
-    if (!editingSlot || !newNameId || !reason.trim()) {
-      toast.error("الرجاء اختيار اسم وذكر سبب التعديل.");
-      return;
-    }
+    if (!editingSlot || !newNameId || !reason.trim())
+      return toast.error("الرجاء اختيار اسم وذكر سبب التعديل.");
     setIsSubmitting(true);
     setIsEditModalOpen(false);
     try {
@@ -261,6 +244,14 @@ export default function App() {
     }
   };
 
+  const handleDateChange = (newValue) => {
+    if (newValue && newValue.startDate) {
+      setSelectedDate(newValue);
+    } else {
+      toast.warn("يجب تحديد تاريخ لعرض الجدول.");
+    }
+  };
+
   return (
     <>
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-4 font-elmessiri">
@@ -277,26 +268,21 @@ export default function App() {
               {" "}
               جدول الدوام اليومي{" "}
             </h1>
-            <p className="text-gray-400 text-lg">
-              {" "}
-              يتم عرض اسم عشوائي لكل ساعة عمل.{" "}
-            </p>
           </div>
           <div className="flex flex-col md:flex-row gap-4 items-center">
             <div className="w-full md:w-72">
-              {" "}
               <Datepicker
                 value={selectedDate}
-                onChange={(d) => setSelectedDate(d)}
+                onChange={handleDateChange}
                 asSingle={true}
                 useRange={false}
-                inputClassName="w-full bg-gray-700 text-white placeholder-gray-400 rounded-md px-4 py-3 border-2 border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-0"
-              />{" "}
+                inputClassName="w-full bg-gray-700 text-white placeholder-gray-400 rounded-md py-3 pr-4 pl-12 border-2 border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-0"
+              />
             </div>
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => setIsNamesModalOpen(true)}
+              onClick={() => setIsRosterModalOpen(true)}
               className="w-full md:w-auto flex-grow flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
               {" "}
@@ -311,121 +297,158 @@ export default function App() {
               className="w-full md:w-auto flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
               {" "}
-              <Shuffle className="h-5 w-5" /> <span>إعادة توزيع اليوم</span>{" "}
+              <Shuffle className="h-5 w-5" /> <span>إعادة توزيع الساعات</span>{" "}
             </motion.button>
           </div>
-          <div className="pt-4">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold flex items-center gap-3">
-                {" "}
-                <Users className="h-7 w-7 text-gray-400" />
-                <span>
-                  {" "}
-                  الجدول الزمني ليوم{" "}
-                  {dayjs(selectedDate.startDate).format("DD MMMM YYYY")}{" "}
-                </span>
+
+          <div className="space-y-8">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold text-gray-300">
+                {dayjs(selectedDate.startDate).format("dddd, DD MMMM YYYY")}
               </h2>
-              {schedule.audit && (
-                <div className="text-xs text-gray-500 flex items-center gap-2">
-                  <History size={14} />
-                  <span>
-                    {" "}
-                    عُدل بواسطة: {schedule.audit.user_name} (
-                    {schedule.audit.reason}) في{" "}
-                    {dayjs(schedule.audit.timestamp).format("h:mm A")}{" "}
-                  </span>
+            </div>
+
+            {/* Hourly Schedule Section */}
+            <div className="pt-4">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold flex items-center gap-3">
+                  {" "}
+                  <Users className="h-7 w-7 text-gray-400" />{" "}
+                  <span>الجدول الزمني للساعات</span>
+                </h2>
+                {auditLog && (
+                  <div className="text-xs text-gray-500 flex items-center gap-2">
+                    <History size={14} />
+                    <span>
+                      {" "}
+                      عُدل بواسطة: {auditLog.user_name} ({auditLog.reason})
+                    </span>
+                  </div>
+                )}
+              </div>
+              {isFetching ? (
+                <div className="flex justify-center items-center h-48">
+                  <Loader className="animate-spin h-8 w-8 text-blue-500" />
+                </div>
+              ) : (
+                <div
+                  key={`hourly-${selectedDate.startDate.toString()}`}
+                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+                >
+                  {displaySchedule.map((slot) => (
+                    <motion.div
+                      key={slot.time}
+                      layout
+                      onClick={() => handleOpenEditModal(slot)}
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className={`rounded-lg p-4 flex flex-col justify-between min-h-[120px] transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500 ${
+                        slot.isAssigned
+                          ? "bg-gray-700 shadow-lg"
+                          : "bg-gray-700/50 border-2 border-dashed border-gray-600"
+                      } ${
+                        slot.isCurrent
+                          ? "ring-4 ring-offset-2 ring-offset-gray-800 ring-green-500"
+                          : ""
+                      }`}
+                    >
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-2 font-bold text-lg">
+                          {" "}
+                          <Clock className="h-5 w-5 text-blue-400" />{" "}
+                          <span>{`${slot.time}:00 - ${slot.time + 1}:00`}</span>{" "}
+                        </div>
+                        {slot.assignment?.is_edited === 1 && (
+                          <div className="relative group">
+                            <span className="text-xs bg-yellow-500 text-gray-900 font-bold px-2 py-0.5 rounded-full">
+                              {" "}
+                              مُعدل{" "}
+                            </span>
+                            <div className="absolute text-right whitespace-nowrap bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 w-max p-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                              {slot.assignment.original_name && (
+                                <div>
+                                  <span className="font-bold">الأصلي:</span>{" "}
+                                  {slot.assignment.original_name}
+                                </div>
+                              )}
+                              {slot.assignment.reason && (
+                                <div>
+                                  <span className="font-bold">السبب:</span>{" "}
+                                  {slot.assignment.reason}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div
+                        className={`text-center rounded p-2 flex-grow flex items-center justify-center ${
+                          slot.isCurrent ? "bg-green-500/20" : "bg-gray-800/50"
+                        }`}
+                      >
+                        {slot.isAssigned ? (
+                          <p className="font-tajawal text-xl font-bold text-white">
+                            {" "}
+                            {slot.assignment.name}{" "}
+                          </p>
+                        ) : (
+                          <p className="text-gray-500">فارغ</p>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
                 </div>
               )}
             </div>
-            {isFetching ? (
-              <div className="flex justify-center items-center h-48">
+
+            {/* Gate Assignment Section */}
+            <div className="pt-4">
+              <h2 className="text-2xl font-bold mb-4 flex items-center gap-3">
                 {" "}
-                <Loader className="animate-spin h-10 w-10 text-blue-500" />{" "}
-              </div>
-            ) : (
-              <div
-                key={schedule.date || "loading-grid"}
-                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
-              >
-                {displaySchedule.map((slot) => (
-                  <motion.div
-                    key={slot.time}
-                    layout
-                    onClick={() => handleOpenEditModal(slot)}
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className={`rounded-lg p-4 flex flex-col justify-between min-h-[120px] transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500 ${
-                      slot.isAssigned
-                        ? "bg-gray-700 shadow-lg"
-                        : "bg-gray-700/50 border-2 border-dashed border-gray-600"
-                    } ${
-                      slot.isCurrent
-                        ? "ring-4 ring-offset-2 ring-offset-gray-800 ring-green-500"
-                        : ""
-                    }`}
-                  >
-                    <div className="flex justify-between items-center mb-2">
-                      <div className="flex items-center gap-2 font-bold text-lg">
-                        {" "}
-                        <Clock className="h-5 w-5 text-blue-400" />{" "}
-                        <span>{`${slot.time}:00 - ${slot.time + 1}:00`}</span>{" "}
-                      </div>
-                      {slot.assignment?.is_edited === 1 && (
-                        <div className="relative group">
-                          <span className="text-xs bg-yellow-500 text-gray-900 font-bold px-2 py-0.5 rounded-full">
-                            {" "}
-                            مُعدل{" "}
-                          </span>
-                          <div className="absolute text-right whitespace-nowrap bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 w-max p-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                            {slot.assignment.original_name && (
-                              <div>
-                                <span className="font-bold">الأصلي:</span>{" "}
-                                {slot.assignment.original_name}
-                              </div>
-                            )}
-                            {slot.assignment.reason && (
-                              <div>
-                                <span className="font-bold">السبب:</span>{" "}
-                                {slot.assignment.reason}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div
-                      className={`text-center rounded p-2 ${
-                        slot.isCurrent ? "bg-green-500/20" : "bg-gray-800/50"
-                      }`}
-                    >
-                      {slot.isAssigned ? (
-                        <p className="font-tajawal text-xl font-bold text-white">
-                          {" "}
-                          {slot.assignment.name}{" "}
-                        </p>
-                      ) : (
-                        <p className="text-gray-500">فارغ</p>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-            {!isFetching && schedule.data.length === 0 && (
-              <div className="text-center py-12 text-gray-500">
-                {" "}
-                <ServerCrash className="mx-auto h-12 w-12 mb-2" />{" "}
-                <p className="text-lg">لا توجد أسماء في القائمة لإنشاء جدول.</p>{" "}
-                <p className="text-sm">أضف بعض الأسماء أولاً.</p>{" "}
-              </div>
-            )}
+                <ShieldCheck className="h-7 w-7 text-gray-400" />{" "}
+                <span>دوام البوابة</span>
+              </h2>
+              {isFetching ? (
+                <div className="flex justify-center items-center h-32">
+                  <Loader className="animate-spin h-8 w-8 text-blue-500" />
+                </div>
+              ) : gateAssignment ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="bg-gray-700 rounded-lg p-6 text-center grid grid-cols-1 md:grid-cols-2 gap-4"
+                >
+                  <div>
+                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
+                      الرئيسي
+                    </h3>
+                    <p className="text-4xl font-bold font-tajawal text-white">
+                      {gateAssignment.main_name}
+                    </p>
+                  </div>
+                  <div className="border-t md:border-t-0 md:border-r border-gray-600 pt-4 md:pt-0 md:pr-4">
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
+                      الاحتياط
+                    </h3>
+                    <p className="text-2xl font-medium text-gray-300">
+                      {gateAssignment.backup_name || "لا يوجد"}
+                    </p>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="text-center py-8 text-gray-500 bg-gray-700/50 rounded-lg">
+                  <ServerCrash className="mx-auto h-10 w-10 mb-2" />
+                  <p>لا يمكن تحديد دوام البوابة.</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
       <AnimatePresence>
-        {isNamesModalOpen && (
+        {isRosterModalOpen && (
           <RosterAbsenceModal
-            onClose={() => setIsNamesModalOpen(false)}
+            onClose={() => setIsRosterModalOpen(false)}
             allNames={allNames}
             absences={absences}
             isSubmitting={isSubmitting}
