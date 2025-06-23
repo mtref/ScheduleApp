@@ -26,34 +26,45 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
     });
     // Use serialize to ensure tables are created in order
     db.serialize(() => {
-      // Create a master table for names
       db.run(
         `CREATE TABLE IF NOT EXISTS names (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL UNIQUE
-        )`,
-        (err) => {
-          if (err) console.error("Error creating names table", err.message);
-          else console.log("Table 'names' is ready.");
-        }
+        )`
       );
-
-      // Create a table to store the generated daily schedules
       db.run(
         `CREATE TABLE IF NOT EXISTS daily_schedule (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name_id INTEGER NOT NULL,
           scheduled_date TEXT NOT NULL,
           scheduled_time INTEGER NOT NULL,
+          is_edited INTEGER DEFAULT 0,
+          original_name_id INTEGER,
+          reason TEXT,
           FOREIGN KEY (name_id) REFERENCES names (id) ON DELETE CASCADE,
-          UNIQUE(scheduled_date, scheduled_time),
-          UNIQUE(scheduled_date, name_id)
-        )`,
-        (err) => {
-          if (err)
-            console.error("Error creating daily_schedule table", err.message);
-          else console.log("Table 'daily_schedule' is ready.");
-        }
+          FOREIGN KEY (original_name_id) REFERENCES names (id) ON DELETE SET NULL,
+          UNIQUE(scheduled_date, scheduled_time)
+        )`
+      );
+      db.run(
+        `CREATE TABLE IF NOT EXISTS absences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name_id INTEGER NOT NULL,
+            absence_date TEXT NOT NULL,
+            FOREIGN KEY (name_id) REFERENCES names(id) ON DELETE CASCADE,
+            UNIQUE(name_id, absence_date)
+        )`
+      );
+      // ADD reason column to audit log
+      db.run(
+        `CREATE TABLE IF NOT EXISTS audit_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          action_date TEXT NOT NULL,
+          action_type TEXT NOT NULL,
+          user_name TEXT NOT NULL,
+          reason TEXT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`
       );
     });
   }
@@ -92,6 +103,49 @@ app.delete("/api/names/:id", (req, res) => {
   });
 });
 
+// --- API Routes for Absences ---
+app.get("/api/absences", (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: "Date is required." });
+  db.all(
+    "SELECT name_id FROM absences WHERE absence_date = ?",
+    [date],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ data: rows.map((r) => r.name_id) });
+    }
+  );
+});
+
+app.post("/api/absences/toggle", (req, res) => {
+  const { name_id, date } = req.body;
+  if (!name_id || !date)
+    return res.status(400).json({ error: "Name ID and date are required." });
+
+  db.get(
+    "SELECT id FROM absences WHERE name_id = ? AND absence_date = ?",
+    [name_id, date],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (row) {
+        db.run("DELETE FROM absences WHERE id = ?", [row.id], (err) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ message: "Absence removed." });
+        });
+      } else {
+        db.run(
+          "INSERT INTO absences (name_id, absence_date) VALUES (?, ?)",
+          [name_id, date],
+          (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.status(201).json({ message: "Absence added." });
+          }
+        );
+      }
+    }
+  );
+});
+
 // --- API Route for Generating and Fetching Schedule ---
 app.get("/api/schedule", (req, res) => {
   const { date } = req.query;
@@ -101,71 +155,137 @@ app.get("/api/schedule", (req, res) => {
       .json({ error: "Valid date query (YYYY-MM-DD) is required." });
   }
 
-  const sqlGetExisting = `SELECT ds.scheduled_time, n.name, n.id AS name_id FROM daily_schedule ds
-                            JOIN names n ON ds.name_id = n.id
-                            WHERE ds.scheduled_date = ? ORDER BY ds.scheduled_time ASC`;
+  const scheduleQuery = `
+        SELECT 
+            ds.scheduled_time, ds.is_edited, ds.reason, current_name.name, ds.name_id,
+            original_name.name AS original_name
+        FROM daily_schedule ds
+        JOIN names AS current_name ON ds.name_id = current_name.id
+        LEFT JOIN names AS original_name ON ds.original_name_id = original_name.id
+        WHERE ds.scheduled_date = ? ORDER BY ds.scheduled_time ASC`;
 
-  db.all(sqlGetExisting, [date], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  const auditQuery = `SELECT user_name, reason, timestamp FROM audit_log WHERE action_date = ? AND action_type = 'shuffle' ORDER BY timestamp DESC LIMIT 1`;
 
-    if (rows.length > 0) {
-      return res.json({ date: date, data: rows });
-    } else {
-      // Generate a new schedule if one doesn't exist
+  Promise.all([
+    new Promise((resolve, reject) =>
+      db.all(scheduleQuery, [date], (err, rows) =>
+        err ? reject(err) : resolve(rows)
+      )
+    ),
+    new Promise((resolve, reject) =>
+      db.get(auditQuery, [date], (err, row) =>
+        err ? reject(err) : resolve(row)
+      )
+    ),
+  ])
+    .then(([scheduleRows, auditRow]) => {
+      if (scheduleRows.length > 0) {
+        return res.json({ date, data: scheduleRows, audit: auditRow || null });
+      }
       regenerateSchedule(date, res);
-    }
-  });
+    })
+    .catch((err) => {
+      res
+        .status(500)
+        .json({
+          error: "Failed to fetch schedule data.",
+          details: err.message,
+        });
+    });
 });
 
 // --- API Route to Regenerate Today's Schedule ---
 app.post("/api/schedule/regenerate", (req, res) => {
-  const { date, hour } = req.body;
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  const { date, hour, userName, reason } = req.body;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))
     return res.status(400).json({ error: "A valid date is required." });
+  if (!userName)
+    return res.status(400).json({ error: "User name for audit is required." });
+  if (!reason)
+    return res.status(400).json({ error: "Reason for shuffle is required." });
+
+  regenerateSchedule(date, res, hour || 0, userName, reason);
+});
+
+// --- API Route to Manually Override a Slot ---
+app.post("/api/schedule/override", (req, res) => {
+  const { date, time, name_id, reason } = req.body;
+  if (!date || !time || !name_id || !reason) {
+    return res
+      .status(400)
+      .json({ error: "Date, time, name_id, and reason are required." });
   }
-  // Pass the hour to the regeneration function. Default to 0 if not provided.
-  regenerateSchedule(date, res, hour || 0);
+
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION;");
+    const selectSql =
+      "SELECT id, name_id, is_edited FROM daily_schedule WHERE scheduled_date = ? AND scheduled_time = ?";
+    db.get(selectSql, [date, time], (err, row) => {
+      if (err) {
+        db.run("ROLLBACK;");
+        return res.status(500).json({ error: "DB error selecting slot." });
+      }
+
+      let query, params;
+      if (row) {
+        query = `UPDATE daily_schedule SET name_id = ?, reason = ?, original_name_id = CASE WHEN is_edited = 0 THEN ? ELSE original_name_id END, is_edited = 1 WHERE id = ?;`;
+        params = [name_id, reason, row.name_id, row.id];
+      } else {
+        query = `INSERT INTO daily_schedule (scheduled_date, scheduled_time, name_id, is_edited, reason) VALUES (?, ?, ?, 1, ?);`;
+        params = [date, time, name_id, reason];
+      }
+
+      db.run(query, params, function (err) {
+        if (err) {
+          db.run("ROLLBACK;");
+          return res.status(500).json({ error: "Failed to override slot." });
+        }
+        db.run("COMMIT;", (err) => {
+          if (err)
+            return res
+              .status(500)
+              .json({ error: "Failed to commit override." });
+          res
+            .status(200)
+            .json({ message: "Schedule slot updated successfully." });
+        });
+      });
+    });
+  });
 });
 
 // --- Reusable function to generate/regenerate a schedule for a given date ---
-function regenerateSchedule(date, res, fromHour = 0) {
-  // This function is now structured with nested callbacks to prevent race conditions.
-
-  // Step 1: Get all names and past assignments in parallel.
+function regenerateSchedule(date, res, fromHour = 0, userName, reason) {
   const allNamesQuery = `SELECT * FROM names`;
-  const pastAssignmentsQuery = `SELECT name_id FROM daily_schedule WHERE scheduled_date = ? AND scheduled_time < ?`;
+  const absencesQuery = `SELECT name_id FROM absences WHERE absence_date = ?`;
 
-  db.all(allNamesQuery, [], (err, allNames) => {
-    if (err) {
-      return res.status(500).json({ error: "Could not fetch names." });
-    }
-
-    db.all(pastAssignmentsQuery, [date, fromHour], (err, pastAssignments) => {
-      if (err) {
-        return res
-          .status(500)
-          .json({ error: "Could not fetch past assignments." });
-      }
-
-      // Step 2: Determine available names using Javascript, which is safer than complex SQL.
-      const preservedNameIds = new Set(pastAssignments.map((a) => a.name_id));
-      const availableNames = allNames.filter(
-        (name) => !preservedNameIds.has(name.id)
+  Promise.all([
+    new Promise((resolve, reject) =>
+      db.all(allNamesQuery, [], (err, rows) =>
+        err ? reject(err) : resolve(rows)
+      )
+    ),
+    new Promise((resolve, reject) =>
+      db.all(absencesQuery, [date], (err, rows) =>
+        err ? reject(err) : resolve(rows)
+      )
+    ),
+  ])
+    .then(([allNames, absences]) => {
+      const absentNameIds = new Set(absences.map((a) => a.name_id));
+      const availableForShuffling = allNames.filter(
+        (name) => !absentNameIds.has(name.id)
       );
 
-      // Step 3: Run the rest of the logic inside a transaction.
       db.serialize(() => {
         db.run("BEGIN TRANSACTION;");
-
-        // Step 4: Delete only the schedule entries for the upcoming hours.
         db.run(
-          "DELETE FROM daily_schedule WHERE scheduled_date = ? AND scheduled_time >= ?",
+          "DELETE FROM daily_schedule WHERE scheduled_date = ? AND scheduled_time >= ? AND is_edited = 0",
           [date, fromHour]
         );
 
-        if (availableNames.length > 0) {
-          // Step 5: Shuffle the available names for randomness.
-          let shuffledNames = [...availableNames];
+        if (availableForShuffling.length > 0) {
+          let shuffledNames = [...availableForShuffling];
           for (let i = shuffledNames.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shuffledNames[i], shuffledNames[j]] = [
@@ -173,27 +293,27 @@ function regenerateSchedule(date, res, fromHour = 0) {
               shuffledNames[i],
             ];
           }
-
           const allTimeSlots = [8, 9, 10, 11, 12, 13];
           const futureTimeSlots = allTimeSlots.filter(
             (time) => time >= fromHour
           );
-
           const insertStmt = db.prepare(
-            "INSERT INTO daily_schedule (name_id, scheduled_date, scheduled_time) VALUES (?, ?, ?)"
+            "INSERT OR IGNORE INTO daily_schedule (name_id, scheduled_date, scheduled_time, is_edited, original_name_id) VALUES (?, ?, ?, 0, NULL)"
           );
-
-          // Step 6: Prepare the new schedule for insertion into future slots.
-          shuffledNames.forEach((assignedName, index) => {
-            const time = futureTimeSlots[index];
-            if (time !== undefined) {
-              insertStmt.run(assignedName.id, date, time);
-            }
+          futureTimeSlots.forEach((time, index) => {
+            const assignedName = shuffledNames[index % shuffledNames.length];
+            if (assignedName) insertStmt.run(assignedName.id, date, time);
           });
           insertStmt.finalize();
         }
 
-        // Step 7: Commit the transaction.
+        if (userName && reason) {
+          db.run(
+            "INSERT INTO audit_log (action_date, action_type, user_name, reason) VALUES (?, 'shuffle', ?, ?)",
+            [date, userName, reason]
+          );
+        }
+
         db.run("COMMIT;", (err) => {
           if (err) {
             db.run("ROLLBACK;");
@@ -202,20 +322,39 @@ function regenerateSchedule(date, res, fromHour = 0) {
               .json({ error: "Failed to commit schedule regeneration." });
           }
 
-          // Step 8: Fetch the complete, updated schedule for the day and send it back ONLY after the commit is successful.
-          const finalScheduleQuery = `SELECT ds.scheduled_time, n.name, n.id AS name_id FROM daily_schedule ds JOIN names n ON ds.name_id = n.id WHERE ds.scheduled_date = ? ORDER BY ds.scheduled_time ASC`;
-          db.all(finalScheduleQuery, [date], (err, finalRows) => {
-            if (err) {
-              return res
-                .status(500)
-                .json({ error: "Failed to retrieve final schedule." });
-            }
-            res.status(201).json({ date: date, data: finalRows });
+          const scheduleQuery = `SELECT ds.scheduled_time, ds.is_edited, ds.reason, n.name, ds.name_id, o.name as original_name FROM daily_schedule ds JOIN names n ON ds.name_id = n.id LEFT JOIN names o ON ds.original_name_id = o.id WHERE ds.scheduled_date = ? ORDER BY ds.scheduled_time ASC`;
+          const auditQuery = `SELECT user_name, reason, timestamp FROM audit_log WHERE action_date = ? AND action_type = 'shuffle' ORDER BY timestamp DESC LIMIT 1`;
+          Promise.all([
+            new Promise((resolve, reject) =>
+              db.all(scheduleQuery, [date], (err, rows) =>
+                err ? reject(err) : resolve(rows)
+              )
+            ),
+            new Promise((resolve, reject) =>
+              db.get(auditQuery, [date], (err, row) =>
+                err ? reject(err) : resolve(row)
+              )
+            ),
+          ]).then(([scheduleRows, auditRow]) => {
+            res
+              .status(201)
+              .json({
+                date: date,
+                data: scheduleRows,
+                audit: auditRow || null,
+              });
           });
         });
       });
+    })
+    .catch((err) => {
+      res
+        .status(500)
+        .json({
+          error: "Failed to fetch necessary data for schedule generation.",
+          details: err.message,
+        });
     });
-  });
 }
 
 // --- Serve Frontend ---
