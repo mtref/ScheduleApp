@@ -119,7 +119,6 @@ app.get("/api/schedule", (req, res) => {
 
 // --- API Route to Regenerate Today's Schedule ---
 app.post("/api/schedule/regenerate", (req, res) => {
-  // We now expect the current hour from the frontend
   const { date, hour } = req.body;
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return res.status(400).json({ error: "A valid date is required." });

@@ -158,22 +158,26 @@ export default function App() {
     }
 
     setIsShuffleModalOpen(false);
-    setIsSubmitting(true); // This will trigger a re-fetch
+    setIsSubmitting(true);
 
     try {
       const dateStr = formatDateForApi(selectedDate.startDate);
+      // Get the current hour to send to the backend
+      const currentHour = dayjs(currentTime).hour();
+
       const response = await fetch("/api/schedule/regenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: dateStr }),
+        // FIX: Send the current hour along with the date
+        body: JSON.stringify({ date: dateStr, hour: currentHour }),
       });
 
       if (!response.ok) {
-        throw new Error("فشل في إعادة توزيع الجدول.");
+        const errorResult = await response.json();
+        throw new Error(errorResult.error || "فشل في إعادة توزيع الجدول.");
       }
 
       const result = await response.json();
-      // Directly update the schedule with the new data from the response
       setSchedule(result);
       toast.success("تمت إعادة توزيع الجدول بنجاح!");
     } catch (error) {
