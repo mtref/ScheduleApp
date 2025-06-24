@@ -6,7 +6,9 @@ const fs = require("fs");
 const cors = require("cors");
 const dayjs = require("dayjs");
 const weekday = require("dayjs/plugin/weekday");
+const isoWeek = require("dayjs/plugin/isoWeek"); // Add this import for ISO week calculation
 dayjs.extend(weekday);
+dayjs.extend(isoWeek); // Extend dayjs with isoWeek plugin
 
 const app = express();
 const PORT = 3000;
@@ -60,7 +62,7 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
         `CREATE TABLE IF NOT EXISTS gate_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, assignment_date TEXT NOT NULL UNIQUE, main_name_id INTEGER NOT NULL, backup_name_id INTEGER, FOREIGN KEY (main_name_id) REFERENCES names(id) ON DELETE CASCADE, FOREIGN KEY (backup_name_id) REFERENCES names(id) ON DELETE SET NULL)`
       );
       db.run(
-        `CREATE TABLE IF NOT EXISTS weekly_duty (id INTEGER PRIMARY KEY AUTOINCREMENT, week_start_date TEXT NOT NULL UNIQUE, name_id INTEGER NOT NULL, is_edited INTEGER DEFAULT 0, original_name_id INTEGER, reason TEXT, FOREIGN KEY (name_id) REFERENCES names(id) ON DELETE CASCADE, FOREIGN KEY (original_name_id) REFERENCES names(id) ON DELETE SET NULL)`
+        `CREATE TABLE IF NOT EXISTS weekly_duty (id INTEGER PRIMARY KEY AUTOINCREMENT, week_start_date TEXT NOT NULL UNIQUE, name_id INTEGER NOT NULL, is_edited INTEGER DEFAULT 0, original_name_id INTEGER, reason TEXT, week_number INTEGER, FOREIGN KEY (name_id) REFERENCES names(id) ON DELETE CASCADE, FOREIGN KEY (original_name_id) REFERENCES names(id) ON DELETE SET NULL)` // Added week_number INTEGER
       );
 
       const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
@@ -163,7 +165,7 @@ app.get("/api/daily-data", async (req, res) => {
     const auditQuery = `SELECT user_name, reason, timestamp FROM audit_log WHERE action_date = ? AND action_type = 'shuffle' ORDER BY timestamp DESC LIMIT 1`;
     const absencesQuery = `SELECT name_id FROM absences WHERE absence_date = ?`;
     const startOfWeek = dayjs(date).weekday(0).format("YYYY-MM-DD");
-    const weeklyQuery = `SELECT wd.week_start_date, wd.is_edited, wd.reason, n.name, wd.name_id, o.name as original_name FROM weekly_duty wd JOIN names n ON wd.name_id = n.id LEFT JOIN names o ON wd.original_name_id = o.id WHERE wd.week_start_date = ?`;
+    const weeklyQuery = `SELECT wd.week_start_date, wd.is_edited, wd.reason, n.name, wd.name_id, o.name as original_name, wd.week_number FROM weekly_duty wd JOIN names n ON wd.name_id = n.id LEFT JOIN names o ON wd.original_name_id = o.id WHERE wd.week_start_date = ?`; // Select week_number
 
     const [hourlyRows, gateRow, weeklyRow, auditRow, absenceRows] =
       await Promise.all([
@@ -286,6 +288,30 @@ app.post("/api/weekly-duty/postpone", async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to postpone weekly duty.", details: err.message });
+  }
+});
+
+// Add new API endpoint for fetching multiple weekly duties
+app.get("/api/weekly-duties/upcoming", async (req, res) => {
+  const { count = 12 } = req.query; // Default to 12 weeks
+  try {
+    const today = dayjs().format("YYYY-MM-DD");
+    const rows = await dbAll(
+      `SELECT wd.week_start_date, wd.week_number, n.name, wd.is_edited, wd.reason, o.name as original_name
+       FROM weekly_duty wd
+       JOIN names n ON wd.name_id = n.id
+       LEFT JOIN names o ON wd.original_name_id = o.id
+       WHERE wd.week_start_date >= ?
+       ORDER BY wd.week_start_date ASC
+       LIMIT ?`,
+      [today, count]
+    );
+    res.json({ data: rows });
+  } catch (err) {
+    res.status(500).json({
+      error: "Failed to fetch upcoming weekly duties.",
+      details: err.message,
+    });
   }
 });
 
@@ -414,7 +440,18 @@ async function regenerateWeeklyDuty(date, allNames) {
       "SELECT * FROM weekly_duty WHERE week_start_date = ?",
       [weekStartDate]
     );
-    if (existing) continue;
+    // Only generate if not existing AND if it's not edited. If it exists and is edited, we preserve it.
+    // However, the current logic is 'if (existing) continue;' which means it only inserts new, non-existing rows.
+    // If you want to *update* existing non-edited ones, you'd need more complex logic.
+    // For now, it will only populate missing weeks.
+    if (existing && existing.is_edited === 0) {
+      // Keep edited ones, only continue if existing and not edited
+      continue;
+    }
+    if (existing && existing.is_edited === 1) {
+      // If it's an edited entry, we also skip
+      continue;
+    }
 
     try {
       const prevWeekDate = dayjs(weekStartDate)
@@ -448,9 +485,10 @@ async function regenerateWeeklyDuty(date, allNames) {
       const newDutyPerson = allNames[nextPersonIndex];
 
       if (newDutyPerson) {
+        const weekNumber = dayjs(weekStartDate).isoWeek(); // Calculate ISO week number
         await dbRun(
-          `INSERT OR IGNORE INTO weekly_duty (week_start_date, name_id) VALUES (?, ?)`,
-          [weekStartDate, newDutyPerson.id]
+          `INSERT OR IGNORE INTO weekly_duty (week_start_date, name_id, week_number) VALUES (?, ?, ?)`,
+          [weekStartDate, newDutyPerson.id, weekNumber] // Insert week_number
         );
       }
     } catch (err) {
