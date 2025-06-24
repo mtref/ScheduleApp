@@ -6,6 +6,6 @@ export default defineConfig({
   root: ".", // build from this folder
   plugins: [react()],
   server: {
-    proxy: { "/api": "http://localhost:3001" },
+    proxy: { "/api": "http://localhost:3000" },
   },
 });

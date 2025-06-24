@@ -16,12 +16,14 @@ import {
   ShieldCheck,
   ShieldAlert,
   Award,
+  ChevronsRight,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast, ToastContainer } from "react-toastify";
 import dayjs from "dayjs";
 import "dayjs/locale/ar";
-
+import weekday from "dayjs/plugin/weekday";
+dayjs.extend(weekday);
 dayjs.locale("ar");
 
 const formatDateForApi = (date) => dayjs(date).format("YYYY-MM-DD");
@@ -111,12 +113,10 @@ export default function App() {
     () => dayjs(selectedDate.startDate).isSame(new Date(), "day"),
     [selectedDate]
   );
-
   const presentNames = useMemo(
     () => allNames.filter((name) => !absences.includes(name.id)),
     [allNames, absences]
   );
-
   const displaySchedule = useMemo(() => {
     const currentHour = dayjs(currentTime).hour();
     return timeSlots.map((time) => {
@@ -185,7 +185,6 @@ export default function App() {
     if (password !== "123456") return toast.error("كلمة المرور غير صحيحة.");
     if (!userName.trim()) return toast.error("الرجاء إدخال اسمك للتدقيق.");
     if (!reason.trim()) return toast.error("الرجاء إدخال سبب لإعادة التوزيع.");
-
     setIsShuffleModalOpen(false);
     setIsSubmitting(true);
     try {
@@ -223,7 +222,6 @@ export default function App() {
     const formData = new FormData(e.target);
     const newNameId = formData.get("newName");
     const reason = formData.get("reason");
-
     if (!editingSlot || !newNameId || !reason.trim())
       return toast.error("الرجاء اختيار اسم وذكر سبب التعديل.");
     setIsSubmitting(true);
@@ -248,12 +246,35 @@ export default function App() {
     }
   };
 
-  const handleDateChange = (newValue) => {
-    if (newValue && newValue.startDate) {
-      setSelectedDate(newValue);
-    } else {
-      toast.warn("يجب تحديد تاريخ لعرض الجدول.");
+  const handlePostponeWeeklyDuty = async () => {
+    if (!weeklyDuty) return;
+
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/weekly-duty/postpone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week_start_date: dayjs(selectedDate.startDate)
+            .weekday(0)
+            .format("YYYY-MM-DD"),
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to postpone duty.");
+      }
+      toast.success("تم ترحيل المناوبة الأسبوعية بنجاح!");
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const handleDateChange = (newValue) => {
+    if (newValue && newValue.startDate) setSelectedDate(newValue);
+    else toast.warn("يجب تحديد تاريخ لعرض الجدول.");
   };
 
   return (
@@ -272,16 +293,22 @@ export default function App() {
               {" "}
               جدول الدوام اليومي{" "}
             </h1>
+            <h2 className="text-2xl font-bold text-gray-300">
+              {dayjs(selectedDate.startDate).format(
+                "dddd, DD MMMM tetrachloride"
+              )}
+            </h2>
           </div>
           <div className="flex flex-col md:flex-row gap-4 items-center">
             <div className="w-full md:w-72">
+              {" "}
               <Datepicker
                 value={selectedDate}
                 onChange={handleDateChange}
                 asSingle={true}
                 useRange={false}
                 inputClassName="w-full bg-gray-700 text-white placeholder-gray-400 rounded-md py-3 pr-4 pl-12 border-2 border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-0"
-              />
+              />{" "}
             </div>
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -306,179 +333,51 @@ export default function App() {
           </div>
 
           <div className="space-y-8">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold text-gray-300">
-                {dayjs(selectedDate.startDate).format("dddd, DD MMMM YYYY")}
-              </h2>
-            </div>
-
-            {/* Hourly Schedule Section */}
-            <div className="pt-4">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold flex items-center gap-3">
-                  {" "}
-                  <Users className="h-7 w-7 text-gray-400" />{" "}
-                  <span>الجدول الزمني للساعات</span>
-                </h2>
-                {auditLog && (
-                  <div className="text-xs text-gray-500 flex items-center gap-2">
-                    <History size={14} />
-                    <span>
-                      {" "}
-                      عُدل بواسطة: {auditLog.user_name} ({auditLog.reason})
-                    </span>
-                  </div>
-                )}
-              </div>
+            <Section
+              title="الجدول الزمني للساعات"
+              icon={Users}
+              auditLog={auditLog}
+            >
               {isFetching ? (
-                <div className="flex justify-center items-center h-48">
-                  <Loader className="animate-spin h-8 w-8 text-blue-500" />
-                </div>
+                <Spinner />
               ) : (
                 <div
                   key={`hourly-${selectedDate.startDate.toString()}`}
                   className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
                 >
                   {displaySchedule.map((slot) => (
-                    <motion.div
+                    <HourlySlotCard
                       key={slot.time}
-                      layout
-                      onClick={() => handleOpenEditModal(slot)}
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className={`rounded-lg p-4 flex flex-col justify-between min-h-[120px] transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500 ${
-                        slot.isAssigned
-                          ? "bg-gray-700 shadow-lg"
-                          : "bg-gray-700/50 border-2 border-dashed border-gray-600"
-                      } ${
-                        slot.isCurrent
-                          ? "ring-4 ring-offset-2 ring-offset-gray-800 ring-green-500"
-                          : ""
-                      }`}
-                    >
-                      <div className="flex justify-between items-center mb-2">
-                        <div className="flex items-center gap-2 font-bold text-lg">
-                          {" "}
-                          <Clock className="h-5 w-5 text-blue-400" />{" "}
-                          <span>{`${slot.time}:00 - ${slot.time + 1}:00`}</span>{" "}
-                        </div>
-                        {slot.assignment?.is_edited === 1 && (
-                          <div className="relative group">
-                            <span className="text-xs bg-yellow-500 text-gray-900 font-bold px-2 py-0.5 rounded-full">
-                              {" "}
-                              مُعدل{" "}
-                            </span>
-                            <div className="absolute text-right whitespace-nowrap bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 w-max p-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                              {slot.assignment.original_name && (
-                                <div>
-                                  <span className="font-bold">الأصلي:</span>{" "}
-                                  {slot.assignment.original_name}
-                                </div>
-                              )}
-                              {slot.assignment.reason && (
-                                <div>
-                                  <span className="font-bold">السبب:</span>{" "}
-                                  {slot.assignment.reason}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div
-                        className={`text-center rounded p-2 flex-grow flex items-center justify-center ${
-                          slot.isCurrent ? "bg-green-500/20" : "bg-gray-800/50"
-                        }`}
-                      >
-                        {slot.isAssigned ? (
-                          <p className="font-tajawal text-xl font-bold text-white">
-                            {" "}
-                            {slot.assignment.name}{" "}
-                          </p>
-                        ) : (
-                          <p className="text-gray-500">فارغ</p>
-                        )}
-                      </div>
-                    </motion.div>
+                      slot={slot}
+                      onEdit={handleOpenEditModal}
+                    />
                   ))}
                 </div>
               )}
-            </div>
+            </Section>
 
-            {/* Gate Assignment Section */}
-            <div className="pt-4">
-              <h2 className="text-2xl font-bold mb-4 flex items-center gap-3">
-                {" "}
-                <ShieldCheck className="h-7 w-7 text-gray-400" />{" "}
-                <span>دوام البوابة</span>
-              </h2>
+            <Section title="دوام البوابة" icon={ShieldCheck}>
               {isFetching ? (
-                <div className="flex justify-center items-center h-32">
-                  <Loader className="animate-spin h-8 w-8 text-blue-500" />
-                </div>
+                <Spinner />
               ) : gateAssignment ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="bg-gray-700 rounded-lg p-6 text-center grid grid-cols-1 md:grid-cols-2 gap-4"
-                >
-                  <div>
-                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
-                      الرئيسي
-                    </h3>
-                    <p className="text-4xl font-bold font-tajawal text-white">
-                      {gateAssignment.main_name}
-                    </p>
-                  </div>
-                  <div className="border-t md:border-t-0 md:border-r border-gray-600 pt-4 md:pt-0 md:pr-4">
-                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
-                      الاحتياط
-                    </h3>
-                    <p className="text-2xl font-medium text-gray-300">
-                      {gateAssignment.backup_name || "لا يوجد"}
-                    </p>
-                  </div>
-                </motion.div>
+                <GateCard assignment={gateAssignment} />
               ) : (
-                <div className="text-center py-8 text-gray-500 bg-gray-700/50 rounded-lg">
-                  <ServerCrash className="mx-auto h-10 w-10 mb-2" />
-                  <p>لا يمكن تحديد دوام البوابة.</p>
-                </div>
+                <EmptyState text="لا يمكن تحديد دوام البوابة." />
               )}
-            </div>
+            </Section>
 
-            {/* Weekly Duty Section */}
-            <div className="pt-4">
-              <h2 className="text-2xl font-bold mb-4 flex items-center gap-3">
-                <Award className="h-7 w-7 text-gray-400" />
-                <span>مناوبة الأسبوع</span>
-              </h2>
+            <Section title="مناوبة الأسبوع" icon={Award}>
               {isFetching ? (
-                <div className="flex justify-center items-center h-32">
-                  <Loader className="animate-spin h-8 w-8 text-blue-500" />
-                </div>
+                <Spinner />
               ) : weeklyDuty ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="bg-gray-700 rounded-lg p-6 text-center"
-                >
-                  <div>
-                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
-                      المناوب لهذه الفترة (من الأحد إلى السبت)
-                    </h3>
-                    <p className="text-4xl font-bold font-tajawal text-white mt-2">
-                      {weeklyDuty.name}
-                    </p>
-                  </div>
-                </motion.div>
+                <WeeklyDutyCard
+                  duty={weeklyDuty}
+                  onPostpone={handlePostponeWeeklyDuty}
+                />
               ) : (
-                <div className="text-center py-8 text-gray-500 bg-gray-700/50 rounded-lg">
-                  <ServerCrash className="mx-auto h-10 w-10 mb-2" />
-                  <p>لا يمكن تحديد المناوب الأسبوعي.</p>
-                </div>
+                <EmptyState text="لا يمكن تحديد المناوب الأسبوعي." />
               )}
-            </div>
+            </Section>
           </div>
         </div>
       </div>
@@ -524,6 +423,162 @@ export default function App() {
   );
 }
 
+// --- Reusable Components ---
+const Section = ({ title, icon: Icon, auditLog, children }) => (
+  <div className="pt-4">
+    {" "}
+    <div className="flex justify-between items-center mb-4">
+      {" "}
+      <h2 className="text-2xl font-bold flex items-center gap-3">
+        {" "}
+        <Icon className="h-7 w-7 text-gray-400" /> <span>{title}</span>
+      </h2>{" "}
+      {auditLog && (
+        <div className="text-xs text-gray-500 flex items-center gap-2">
+          {" "}
+          <History size={14} />{" "}
+          <span>
+            {" "}
+            عُدل بواسطة: {auditLog.user_name} ({auditLog.reason})
+          </span>{" "}
+        </div>
+      )}{" "}
+    </div>{" "}
+    {children}{" "}
+  </div>
+);
+const Spinner = () => (
+  <div className="flex justify-center items-center h-24">
+    <Loader className="animate-spin h-8 w-8 text-blue-500" />
+  </div>
+);
+const EmptyState = ({ text }) => (
+  <div className="text-center py-8 text-gray-500 bg-gray-700/50 rounded-lg">
+    <ServerCrash className="mx-auto h-10 w-10 mb-2" />
+    <p>{text}</p>
+  </div>
+);
+const HourlySlotCard = ({ slot, onEdit }) => (
+  <motion.div
+    layout
+    onClick={() => onEdit(slot)}
+    initial={{ opacity: 0, scale: 0.8 }}
+    animate={{ opacity: 1, scale: 1 }}
+    className={`rounded-lg p-4 flex flex-col justify-between min-h-[120px] transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500 ${
+      slot.isAssigned
+        ? "bg-gray-700 shadow-lg"
+        : "bg-gray-700/50 border-2 border-dashed border-gray-600"
+    } ${
+      slot.isCurrent
+        ? "ring-4 ring-offset-2 ring-offset-gray-800 ring-green-500"
+        : ""
+    }`}
+  >
+    {" "}
+    <div className="flex justify-between items-center mb-2">
+      {" "}
+      <div className="flex items-center gap-2 font-bold text-lg">
+        {" "}
+        <Clock className="h-5 w-5 text-blue-400" />{" "}
+        <span>{`${slot.time}:00 - ${slot.time + 1}:00`}</span>{" "}
+      </div>{" "}
+      {slot.assignment?.is_edited === 1 && (
+        <div className="relative group">
+          {" "}
+          <span className="text-xs bg-yellow-500 text-gray-900 font-bold px-2 py-0.5 rounded-full">
+            {" "}
+            مُعدل{" "}
+          </span>{" "}
+          <div className="absolute text-right whitespace-nowrap bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 w-max p-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            {" "}
+            {slot.assignment.original_name && (
+              <div>
+                <span className="font-bold">الأصلي:</span>{" "}
+                {slot.assignment.original_name}
+              </div>
+            )}{" "}
+            {slot.assignment.reason && (
+              <div>
+                <span className="font-bold">السبب:</span>{" "}
+                {slot.assignment.reason}
+              </div>
+            )}{" "}
+          </div>{" "}
+        </div>
+      )}{" "}
+    </div>{" "}
+    <div
+      className={`text-center rounded p-2 flex-grow flex items-center justify-center ${
+        slot.isCurrent ? "bg-green-500/20" : "bg-gray-800/50"
+      }`}
+    >
+      {" "}
+      {slot.isAssigned ? (
+        <p className="font-tajawal text-xl font-bold text-white">
+          {" "}
+          {slot.assignment.name}{" "}
+        </p>
+      ) : (
+        <p className="text-gray-500">فارغ</p>
+      )}{" "}
+    </div>{" "}
+  </motion.div>
+);
+const GateCard = ({ assignment }) => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    className="bg-gray-700 rounded-lg p-6 text-center grid grid-cols-1 md:grid-cols-2 gap-4"
+  >
+    {" "}
+    <div>
+      <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
+        الرئيسي
+      </h3>
+      <p className="text-4xl font-bold font-tajawal text-white">
+        {assignment.main_name}
+      </p>
+    </div>{" "}
+    <div className="border-t md:border-t-0 md:border-r border-gray-600 pt-4 md:pt-0 md:pr-4">
+      <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
+        الاحتياط
+      </h3>
+      <p className="text-2xl font-medium text-gray-300">
+        {assignment.backup_name || "لا يوجد"}
+      </p>
+    </div>{" "}
+  </motion.div>
+);
+const WeeklyDutyCard = ({ duty, onPostpone }) => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    className="bg-gray-700 rounded-lg p-6 text-center"
+  >
+    {" "}
+    <div className="flex justify-between items-start">
+      {" "}
+      <div className="flex-grow text-center">
+        {" "}
+        <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
+          {" "}
+          المناوب لهذه الفترة (من الأحد إلى السبت){" "}
+        </h3>{" "}
+        <p className="text-4xl font-bold font-tajawal text-white mt-2">
+          {" "}
+          {duty.name}{" "}
+        </p>{" "}
+      </div>{" "}
+      <button
+        onClick={onPostpone}
+        className="text-gray-400 hover:text-purple-400 transition-colors p-2"
+      >
+        <ChevronsRight size={20} />
+      </button>{" "}
+    </div>{" "}
+  </motion.div>
+);
+
 // --- Sub-Components for Modals ---
 const RosterAbsenceModal = ({
   onClose,
@@ -544,6 +599,7 @@ const RosterAbsenceModal = ({
     className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
     onClick={onClose}
   >
+    {" "}
     <motion.div
       initial={{ y: -50, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
@@ -551,6 +607,7 @@ const RosterAbsenceModal = ({
       className="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg p-6 space-y-4"
       onClick={(e) => e.stopPropagation()}
     >
+      {" "}
       <div className="flex justify-between items-center">
         <h3 className="text-2xl font-bold">
           قائمة الأسماء والغياب ليوم{" "}
@@ -559,11 +616,12 @@ const RosterAbsenceModal = ({
         <button onClick={onClose} className="text-gray-400 hover:text-white">
           <X />
         </button>
-      </div>
+      </div>{" "}
       <form
         onSubmit={handleAddName}
         className="flex gap-2 p-2 bg-gray-900/50 rounded-md"
       >
+        {" "}
         <input
           type="text"
           value={newName}
@@ -571,7 +629,7 @@ const RosterAbsenceModal = ({
           placeholder="أضف اسماً جديداً للقائمة الرئيسية..."
           className="flex-grow bg-gray-700 text-white rounded-md px-3 py-2 focus:border-green-500 focus:outline-none focus:ring-0"
           autoFocus
-        />
+        />{" "}
         <button
           type="submit"
           disabled={isSubmitting}
@@ -579,9 +637,10 @@ const RosterAbsenceModal = ({
         >
           <UserPlus className="h-5 w-5" />
           <span>إضافة</span>
-        </button>
-      </form>
+        </button>{" "}
+      </form>{" "}
       <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+        {" "}
         {allNames.map((name) => (
           <div
             key={name.id}
@@ -607,9 +666,9 @@ const RosterAbsenceModal = ({
               </button>
             </div>
           </div>
-        ))}
-      </div>
-    </motion.div>
+        ))}{" "}
+      </div>{" "}
+    </motion.div>{" "}
   </motion.div>
 );
 
@@ -617,11 +676,9 @@ const ShuffleModal = ({ onClose, isSubmitting, handleShuffle }) => {
   const [userName, setUserName] = useState("");
   const [password, setPassword] = useState("");
   const [reason, setReason] = useState("");
-
   const handleSubmit = (e) => {
     handleShuffle(e, userName, password, reason);
   };
-
   return (
     <motion.div
       initial={{ opacity: 0 }}
