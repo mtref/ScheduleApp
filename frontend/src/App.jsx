@@ -160,11 +160,16 @@ const GateCard = ({ assignment }) => (
   </motion.div>
 );
 
-const WeeklyDutyCard = ({ duty, onPostpone }) => (
+// Modified WeeklyDutyCard to display "Off Week" and be clickable for editing
+const WeeklyDutyCard = (
+  { duty, onPostpone, onEdit } // Added onEdit prop
+) => (
   <motion.div
+    layout // Added layout for smooth transitions if using Framer Motion layout animations
     initial={{ opacity: 0 }}
     animate={{ opacity: 1 }}
-    className="bg-gray-700 rounded-lg p-6 text-center"
+    className="bg-gray-700 rounded-lg p-6 text-center transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500" // Made clickable
+    onClick={() => onEdit(duty)} // Added onClick to trigger edit modal
   >
     {" "}
     <div className="flex justify-between items-start">
@@ -176,17 +181,30 @@ const WeeklyDutyCard = ({ duty, onPostpone }) => (
           المناوب لهذه الفترة (الأسبوع رقم {duty.week_number} - من الأحد إلى
           السبت){" "}
         </h3>{" "}
-        <p className="text-4xl font-bold font-tajawal text-white mt-2">
-          {" "}
-          {duty.name}{" "}
-        </p>{" "}
+        {duty.is_off_week ? (
+          <p className="text-4xl font-bold font-tajawal text-red-400 mt-2">
+            أسبوع إجازة
+          </p>
+        ) : (
+          <p className="text-4xl font-bold font-tajawal text-white mt-2">
+            {" "}
+            {duty.name}{" "}
+          </p>
+        )}{" "}
       </div>{" "}
-      <button
-        onClick={onPostpone}
-        className="text-gray-400 hover:text-purple-400 transition-colors p-2"
-      >
-        <ChevronsRight size={20} />
-      </button>{" "}
+      {/* Postpone button - consider if it should be available for off-weeks */}
+      {!duty.is_off_week && (
+        <button
+          onClick={(e) => {
+            // Stop propagation to prevent card's onClick from firing
+            e.stopPropagation();
+            onPostpone();
+          }}
+          className="text-gray-400 hover:text-purple-400 transition-colors p-2"
+        >
+          <ChevronsRight size={20} />
+        </button>
+      )}{" "}
     </div>{" "}
   </motion.div>
 );
@@ -446,7 +464,6 @@ const WeeklyDutyListModal = ({
   allNames,
   refreshTrigger,
 }) => {
-  // Added refreshTrigger prop
   const [weeklyDuties, setWeeklyDuties] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -467,7 +484,7 @@ const WeeklyDutyListModal = ({
       }
     };
     fetchUpcomingDuties();
-  }, [refreshTrigger]); // Added refreshTrigger to dependency array
+  }, [refreshTrigger]);
 
   return (
     <motion.div
@@ -534,8 +551,14 @@ const WeeklyDutyListModal = ({
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                       {dayjs(duty.week_start_date).format("DD/MM/YYYY")}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
-                      {duty.name}
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {duty.is_off_week ? (
+                        <span className="font-bold text-red-400">
+                          أسبوع إجازة
+                        </span>
+                      ) : (
+                        <span className="text-white">{duty.name}</span>
+                      )}{" "}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {duty.is_edited ? (
@@ -576,83 +599,129 @@ const EditWeeklyDutyModal = ({
   handleOverrideWeeklyDuty,
   duty,
   allNames,
-}) => (
-  <motion.div
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
-    onClick={onClose}
-  >
+}) => {
+  const [isOffWeekChecked, setIsOffWeekChecked] = useState(
+    duty.is_off_week === 1
+  );
+  const [selectedNameId, setSelectedNameId] = useState(duty.name_id);
+  const [reason, setReason] = useState(duty.reason || "");
+
+  useEffect(() => {
+    // Sync state with duty prop changes
+    setIsOffWeekChecked(duty.is_off_week === 1);
+    setSelectedNameId(duty.name_id);
+    setReason(duty.reason || "");
+  }, [duty]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Pass isOffWeekChecked to the parent handler
+    handleOverrideWeeklyDuty(e, isOffWeekChecked, selectedNameId, reason);
+  };
+
+  return (
     <motion.div
-      initial={{ y: -50, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: -50, opacity: 0 }}
-      className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
-      onClick={(e) => e.stopPropagation()}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
     >
-      <div className="flex justify-between items-center">
-        <h3 className="text-2xl font-bold">
-          تعديل مناوبة الأسبوع رقم {duty.week_number}
-        </h3>
-        <button onClick={onClose} className="text-gray-400 hover:text-white">
-          <X />
-        </button>
-      </div>
-      <form onSubmit={handleOverrideWeeklyDuty} className="space-y-4">
-        <div>
-          <label
-            htmlFor="newName"
-            className="block text-sm font-medium text-gray-300 mb-1"
+      <motion.div
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: -50, opacity: 0 }}
+        className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center">
+          <h3 className="text-2xl font-bold">
+            تعديل مناوبة الأسبوع رقم {duty.week_number}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label
+              htmlFor="isOffWeek"
+              className="flex items-center text-sm font-medium text-gray-300 mb-2 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                id="isOffWeek"
+                checked={isOffWeekChecked}
+                onChange={(e) => setIsOffWeekChecked(e.target.checked)}
+                className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2" // Arabic: ml-2 for left margin
+              />
+              <span>إجازة أسبوعية (أسبوع إيقاف)</span>
+            </label>
+          </div>
+          <div
+            className={isOffWeekChecked ? "opacity-50 pointer-events-none" : ""}
           >
-            اختر اسماً جديداً
-          </label>
-          <select
-            id="newName"
-            name="newName"
-            defaultValue={duty.name_id}
-            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-          >
-            {allNames.map((name) => (
-              <option key={name.id} value={name.id}>
-                {name.name}
+            <label
+              htmlFor="newName"
+              className="block text-sm font-medium text-gray-300 mb-1"
+            >
+              اختر اسماً جديداً
+            </label>
+            <select
+              id="newName"
+              name="newName"
+              value={selectedNameId || ""} // Ensure controlled component
+              onChange={(e) => setSelectedNameId(parseInt(e.target.value))}
+              className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+              disabled={isOffWeekChecked} // Disable if off-week
+            >
+              <option value="" disabled>
+                اختر اسماً
               </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label
-            htmlFor="reason"
-            className="block text-sm font-medium text-gray-300 mb-1"
+              {allNames.map((name) => (
+                <option key={name.id} value={name.id}>
+                  {name.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label
+              htmlFor="reason"
+              className="block text-sm font-medium text-gray-300 mb-1"
+            >
+              السبب
+            </label>
+            <input
+              id="reason"
+              name="reason"
+              type="text"
+              value={reason} // Controlled component
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="سبب التعديل..."
+              className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={
+              isSubmitting || (isOffWeekChecked === false && !selectedNameId)
+            } // Disable if not off-week and no name selected
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
           >
-            السبب
-          </label>
-          <input
-            id="reason"
-            name="reason"
-            type="text"
-            defaultValue={duty.reason || ""}
-            placeholder="سبب التعديل..."
-            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-            required
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
-        >
-          {isSubmitting ? (
-            <Loader className="animate-spin h-5 w-5" />
-          ) : (
-            <Edit className="h-5 w-5" />
-          )}
-          <span>حفظ التعديل</span>
-        </button>
-      </form>
+            {isSubmitting ? (
+              <Loader className="animate-spin h-5 w-5" />
+            ) : (
+              <Edit className="h-5 w-5" />
+            )}
+            <span>حفظ التعديل</span>
+          </button>
+        </form>
+      </motion.div>
     </motion.div>
-  </motion.div>
-);
+  );
+};
 
 // --- Main App Component ---
 export default function App() {
@@ -702,6 +771,7 @@ export default function App() {
         const res = await fetch(`/api/daily-data?date=${dateStr}`);
         if (!res.ok) throw new Error("Failed to fetch daily data.");
         const result = await res.json();
+        console.log("Frontend received weeklyDuty:", result.weeklyDuty); // Debugging log
 
         setHourlySchedule(result.hourly || []);
         setGateAssignment(result.gate || null);
@@ -923,14 +993,21 @@ export default function App() {
   };
 
   // Handler for overriding a weekly duty slot
-  const handleOverrideWeeklyDuty = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const newNameId = formData.get("newName");
-    const reason = formData.get("reason");
-
-    if (!editingWeeklyDuty || !newNameId || !reason.trim()) {
-      return toast.error("الرجاء اختيار اسم وذكر سبب التعديل.");
+  const handleOverrideWeeklyDuty = async (
+    e,
+    isOffWeekChecked,
+    selectedNameId,
+    reason
+  ) => {
+    // e.preventDefault(); is handled inside the modal component now
+    if (
+      !editingWeeklyDuty ||
+      !reason.trim() ||
+      (isOffWeekChecked === false && !selectedNameId)
+    ) {
+      return toast.error(
+        "الرجاء اختيار اسم أو تحديد أسبوع إجازة وذكر سبب التعديل."
+      );
     }
 
     setIsSubmitting(true);
@@ -941,8 +1018,9 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           week_start_date: editingWeeklyDuty.week_start_date,
-          name_id: parseInt(newNameId),
+          name_id: selectedNameId,
           reason: reason.trim(),
+          is_off_week: isOffWeekChecked ? 1 : 0, // Pass the new field
         }),
       });
 
@@ -1068,6 +1146,7 @@ export default function App() {
                 <WeeklyDutyCard
                   duty={weeklyDuty}
                   onPostpone={handlePostponeWeeklyDuty}
+                  onEdit={handleOpenEditWeeklyDutyModal} // Pass the edit handler here
                 />
               ) : (
                 <EmptyState text="لا يمكن تحديد المناوب الأسبوعي." />
