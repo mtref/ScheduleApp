@@ -61,7 +61,6 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
       db.run(
         `CREATE TABLE IF NOT EXISTS gate_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, assignment_date TEXT NOT NULL UNIQUE, main_name_id INTEGER NOT NULL, backup_name_id INTEGER, FOREIGN KEY (main_name_id) REFERENCES names(id) ON DELETE CASCADE, FOREIGN KEY (backup_name_id) REFERENCES names(id) ON DELETE SET NULL)`
       );
-      // Modified weekly_duty table to include is_off_week
       db.run(
         `CREATE TABLE IF NOT EXISTS weekly_duty (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,11 +76,11 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
         )`
       );
 
-      const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
+      //const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
       const insertNameStmt = db.prepare(
         "INSERT OR IGNORE INTO names (name) VALUES (?)"
       );
-      initialNames.forEach((name) => insertNameStmt.run(name));
+      //initialNames.forEach((name) => insertNameStmt.run(name));
       insertNameStmt.finalize();
     });
 
@@ -393,10 +392,15 @@ app.post("/api/weekly-duty/override", async (req, res) => {
       );
     }
 
-    // After an override (especially off-week), regenerate future duties to ensure rotation is correct
-    // Call regenerateWeeklyDuty from the current week onward.
+    // After an override, we need to regenerate/shift the duties starting from the affected week.
+    // We will clear out all *non-edited* duties from this week onwards, then let regenerateWeeklyDuty re-populate them.
+    await dbRun(
+      `DELETE FROM weekly_duty WHERE week_start_date >= ? AND is_edited = 0;`,
+      [week_start_date]
+    );
+
     await regenerateWeeklyDuty(
-      week_start_date,
+      week_start_date, // Trigger regeneration from this week
       await dbAll(`SELECT * FROM names ORDER BY id`)
     );
 
@@ -532,20 +536,25 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
   console.log(`--- Regenerate Weekly Duty for triggerDate: ${triggerDate} ---`);
 
   // Fetch all existing weekly duties to preserve manually edited ones
-  const allExistingDuties = await dbAll(`SELECT * FROM weekly_duty`);
+  // We need to fetch ALL existing duties, as `regenerateWeeklyDuty` will now
+  // be responsible for setting the future based on past *actual* assignments
+  // and skipping over *edited* weeks (including off-weeks).
+  const allExistingDuties = await dbAll(
+    `SELECT * FROM weekly_duty ORDER BY week_start_date ASC`
+  );
   const editedDutiesMap = new Map();
   allExistingDuties.forEach((duty) => {
-    // Only store if it's an edited duty to preserve it
     if (duty.is_edited === 1) {
-      // We only need to "map" truly edited duties
+      // Only manually edited weeks are "fixed" and not overwritten
       editedDutiesMap.set(duty.week_start_date, duty);
     }
   });
-  console.log("Edited duties map:", editedDutiesMap);
+  console.log("Edited duties map (only truly edited):", editedDutiesMap);
 
   let lastAssignedPersonId = null;
 
-  // Find the last actually assigned person *before* the trigger date
+  // Find the last actually assigned person from *all existing duties before the trigger date*
+  // This is crucial for correctly starting the rotation after an edit/off-week
   const mostRecentActualDutyBeforeTrigger = await dbGet(
     `SELECT name_id FROM weekly_duty WHERE is_off_week = 0 AND name_id IS NOT NULL AND week_start_date < ? ORDER BY week_start_date DESC LIMIT 1`,
     [startOfWeekForTrigger.format("YYYY-MM-DD")]
@@ -554,20 +563,14 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
   if (mostRecentActualDutyBeforeTrigger) {
     lastAssignedPersonId = mostRecentActualDutyBeforeTrigger.name_id;
   } else {
-    // If no duty found before trigger date, find any most recent actual duty from all time
-    const anyMostRecentActualDuty = await dbGet(
-      `SELECT name_id FROM weekly_duty WHERE is_off_week = 0 AND name_id IS NOT NULL ORDER BY week_start_date DESC LIMIT 1`
-    );
-    if (anyMostRecentActualDuty) {
-      lastAssignedPersonId = anyMostRecentActualDuty.name_id;
+    // If no duty found before trigger date, or no actual assignments, start with first person
+    if (allNames.length > 0) {
+      lastAssignedPersonId = allNames[0].id;
     }
   }
-
-  // If still no last assigned person, start with the first person in the list
-  if (lastAssignedPersonId === null && allNames.length > 0) {
-    lastAssignedPersonId = allNames[0].id;
-  }
-  console.log(`Initial lastAssignedPersonId: ${lastAssignedPersonId}`);
+  console.log(
+    `Initial lastAssignedPersonId for rotation: ${lastAssignedPersonId}`
+  );
 
   for (let i = 0; i < WEEKS_TO_GENERATE; i++) {
     const weekStartDate = dayjs(startOfWeekForTrigger)
@@ -578,41 +581,34 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
 
     console.log(`Processing week: ${weekStartDate} (Week No: ${weekNumber})`);
 
-    // Check if a record already exists (edited or not)
-    const existingEntry = await dbGet(
-      `SELECT id, is_edited, is_off_week, name_id FROM weekly_duty WHERE week_start_date = ?`,
-      [weekStartDate]
-    );
+    const existingEditedRecord = editedDutiesMap.get(weekStartDate);
 
-    if (existingEntry) {
+    // If it's a manually edited week (including a manually set off-week), preserve it.
+    // The rotation `lastAssignedPersonId` must account for this week's person if it's not an off-week.
+    if (existingEditedRecord) {
       console.log(
-        `  Existing record found for ${weekStartDate}:`,
-        existingEntry
+        `  Existing MANUALLY EDITED record found for ${weekStartDate}:`,
+        existingEditedRecord
       );
-      // If it's a manually edited record OR an off-week, preserve its state and adjust lastAssignedPersonId for rotation
-      if (existingEntry.is_edited === 1 || existingEntry.is_off_week === 1) {
-        if (existingEntry.is_off_week === 0 && existingEntry.name_id !== null) {
-          lastAssignedPersonId = existingEntry.name_id;
-          console.log(
-            `  Updated lastAssignedPersonId based on existing non-off-week: ${lastAssignedPersonId}`
-          );
-        } else if (existingEntry.is_off_week === 1) {
-          console.log(
-            `  Skipping assignment for off-week: ${weekStartDate}. Rotation continues from last assigned.`
-          );
-        }
-        continue; // Skip generation for this week, as it already exists and is managed
-      } else {
-        // If it's an existing *auto-generated* record (is_edited = 0, is_off_week = 0),
-        // then its person should be the one from which rotation continues.
-        lastAssignedPersonId = existingEntry.name_id;
+      if (
+        existingEditedRecord.is_off_week === 0 &&
+        existingEditedRecord.name_id !== null
+      ) {
+        lastAssignedPersonId = existingEditedRecord.name_id; // This person took their turn.
         console.log(
-          `  Updated lastAssignedPersonId based on existing auto-generated week: ${lastAssignedPersonId}`
+          `  Updated lastAssignedPersonId based on preserved edited week: ${lastAssignedPersonId}`
         );
-        continue; // Keep the existing auto-generated entry
+      } else if (existingEditedRecord.is_off_week === 1) {
+        console.log(
+          `  Skipping over manually set off-week: ${weekStartDate}. Rotation will effectively skip this "turn."`
+        );
+        // lastAssignedPersonId does NOT change for an off-week, as no one was assigned.
+        // The next person in the sequence will take the *next* available non-off-week.
       }
+      continue; // Move to the next week, as this one is already handled by manual edit.
     }
 
+    // If we reach here, it's either a new week to be generated or an existing *auto-generated* one that needs updating.
     let newDutyPersonId = null;
     if (lastAssignedPersonId !== null) {
       const lastIndex = allNames.findIndex(
@@ -629,57 +625,29 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
     }
 
     if (newDutyPersonId) {
+      // Here, we use INSERT OR REPLACE. Why?
+      // Because if a week was previously auto-generated (is_edited=0), and we just created an off-week
+      // earlier in the timeline, all subsequent auto-generated weeks need to shift.
+      // INSERT OR REPLACE allows us to overwrite old auto-generated entries with new shifted ones.
+      // Manually edited entries are skipped by the `existingEditedRecord` check above.
       console.log(
-        `  Inserting (if not exists) for ${weekStartDate}: name_id=${newDutyPersonId}, week_number=${weekNumber}`
+        `  INSERT OR REPLACE for ${weekStartDate}: name_id=${newDutyPersonId}, week_number=${weekNumber}`
       );
       try {
-        // Use INSERT OR IGNORE to only add if no record exists for this weekStartDate
         await dbRun(
-          `INSERT OR IGNORE INTO weekly_duty (week_start_date, name_id, week_number, is_edited, is_off_week, original_name_id, reason)
-           VALUES (?, ?, ?, 0, 0, NULL, NULL)`,
+          `INSERT OR REPLACE INTO weekly_duty (week_start_date, name_id, week_number, is_edited, is_off_week, original_name_id, reason)
+                 VALUES (?, ?, ?, 0, 0, NULL, NULL)`, // These are always auto-generated (is_edited=0, is_off_week=0)
           [weekStartDate, newDutyPersonId, weekNumber]
         );
-        // Important: If INSERT OR IGNORE actually inserted, then update lastAssignedPersonId.
-        // If it ignored (because a row already existed), then lastAssignedPersonId should have
-        // been updated by the `existingEntry` check above, or it remains from the previous loop iteration.
-        // For simplicity, we can always update it here if an insert was attempted and successful,
-        // as the `existingEntry` check already handled cases where we 'continue' early.
-        const changes = this.changes; // Check if insert actually happened. Requires a `db.run` context.
-        // Better to query again or rely on the `existingEntry` logic.
-
-        // A simpler way to manage lastAssignedPersonId after the loop:
-        // Assume successful insertion, or if existingEntry was found, it took care of it.
-        // The `existingEntry` logic is now more robust.
-        // After an actual insert, we update lastAssignedPersonId.
-        // If the query was `INSERT OR IGNORE`, this `this.lastID` or `this.changes` logic is tricky outside of direct db.run callback.
-        // The existing `dbRun` helper wraps this, so it's harder to get `this.changes`.
-        // The `lastAssignedPersonId` update should happen when an assignment is *actually confirmed* for the week.
-
-        // Simpler reliable flow:
-        // 1. Check if `existingEntry` exists. If so, update `lastAssignedPersonId` and `continue`.
-        // 2. If no `existingEntry`, calculate `newDutyPersonId`.
-        // 3. Attempt `INSERT OR IGNORE`.
-        // 4. AFTER the loop, or for each *successful* insertion, update `lastAssignedPersonId`.
-        // Since we are using `INSERT OR IGNORE`, we won't overwrite, so the `lastAssignedPersonId` logic
-        // needs to correctly account for the *actual* person assigned to that week, whether by new insert
-        // or by a pre-existing (unedited) entry.
-
-        // Let's refine the loop's lastAssignedPersonId management:
-        // The current `existingEntry` check determines `lastAssignedPersonId` correctly for `continue` cases.
-        // If we reach this `if (newDutyPersonId)` block, it means `existingEntry` was NOT found.
-        // So, if we successfully insert, THIS `newDutyPersonId` becomes the `lastAssignedPersonId` for the next iteration.
-        await dbRun(
-          `INSERT OR IGNORE INTO weekly_duty (week_start_date, name_id, week_number, is_edited, is_off_week, original_name_id, reason)
-           VALUES (?, ?, ?, 0, 0, NULL, NULL)`,
-          [weekStartDate, newDutyPersonId, weekNumber]
-        );
-        // Only update if it was genuinely inserted (which it would be, as no existingEntry was found)
-        lastAssignedPersonId = newDutyPersonId;
+        lastAssignedPersonId = newDutyPersonId; // Update last assigned person for the next iteration
         console.log(
-          `  Successfully inserted. New lastAssignedPersonId: ${lastAssignedPersonId}`
+          `  Successfully inserted/replaced. New lastAssignedPersonId: ${lastAssignedPersonId}`
         );
       } catch (err) {
-        console.error("Failed to insert/update weekly duty slot:", err.message);
+        console.error(
+          "Failed to insert/replace weekly duty slot:",
+          err.message
+        );
       }
     } else {
       console.log(
