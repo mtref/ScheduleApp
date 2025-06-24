@@ -315,6 +315,51 @@ app.get("/api/weekly-duties/upcoming", async (req, res) => {
   }
 });
 
+// New API endpoint for overriding a weekly duty slot
+app.post("/api/weekly-duty/override", async (req, res) => {
+  const { week_start_date, name_id, reason } = req.body;
+  if (!week_start_date || !name_id || !reason) {
+    return res.status(400).json({
+      error: "All fields are required: week_start_date, name_id, reason.",
+    });
+  }
+
+  try {
+    await dbRun("BEGIN TRANSACTION;");
+
+    const row = await dbGet(
+      "SELECT id, name_id, is_edited FROM weekly_duty WHERE week_start_date = ?",
+      [week_start_date]
+    );
+
+    if (row) {
+      // If a record exists, update it
+      await dbRun(
+        `UPDATE weekly_duty SET name_id = ?, reason = ?, original_name_id = CASE WHEN is_edited = 0 THEN ? ELSE original_name_id END, is_edited = 1 WHERE id = ?;`,
+        [name_id, reason, row.name_id, row.id]
+      );
+    } else {
+      // If no record exists for the date, insert a new one (marked as edited)
+      // This scenario should be less common for weekly duty which is regenerated,
+      // but good for robustness. Original_name_id would be null here.
+      await dbRun(
+        `INSERT INTO weekly_duty (week_start_date, name_id, is_edited, reason) VALUES (?, ?, 1, ?);`,
+        [week_start_date, name_id, reason]
+      );
+    }
+
+    await dbRun("COMMIT;");
+    res.status(200).json({ message: "Weekly duty slot updated successfully." });
+  } catch (err) {
+    await dbRun("ROLLBACK;");
+    console.error("Failed to override weekly duty slot:", err.message);
+    res.status(500).json({
+      error: "Failed to override weekly duty slot.",
+      details: err.message,
+    });
+  }
+});
+
 // --- Regeneration Logic ---
 async function regenerateAll(date) {
   const allNames = await dbAll(`SELECT * FROM names ORDER BY id`);
@@ -428,7 +473,6 @@ async function regenerateHourlySchedule(
 async function regenerateWeeklyDuty(date, allNames) {
   if (allNames.length === 0) return;
 
-  // Generate for the next 12 weeks from the current date
   const WEEKS_TO_GENERATE = 12;
   const startOfWeekForRequest = dayjs(date).weekday(0).format("YYYY-MM-DD");
 
@@ -440,16 +484,10 @@ async function regenerateWeeklyDuty(date, allNames) {
       "SELECT * FROM weekly_duty WHERE week_start_date = ?",
       [weekStartDate]
     );
-    // Only generate if not existing AND if it's not edited. If it exists and is edited, we preserve it.
-    // However, the current logic is 'if (existing) continue;' which means it only inserts new, non-existing rows.
-    // If you want to *update* existing non-edited ones, you'd need more complex logic.
-    // For now, it will only populate missing weeks.
     if (existing && existing.is_edited === 0) {
-      // Keep edited ones, only continue if existing and not edited
       continue;
     }
     if (existing && existing.is_edited === 1) {
-      // If it's an edited entry, we also skip
       continue;
     }
 
@@ -485,10 +523,10 @@ async function regenerateWeeklyDuty(date, allNames) {
       const newDutyPerson = allNames[nextPersonIndex];
 
       if (newDutyPerson) {
-        const weekNumber = dayjs(weekStartDate).isoWeek(); // Calculate ISO week number
+        const weekNumber = dayjs(weekStartDate).isoWeek();
         await dbRun(
           `INSERT OR IGNORE INTO weekly_duty (week_start_date, name_id, week_number) VALUES (?, ?, ?)`,
-          [weekStartDate, newDutyPerson.id, weekNumber] // Insert week_number
+          [weekStartDate, newDutyPerson.id, weekNumber]
         );
       }
     } catch (err) {

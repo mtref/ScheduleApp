@@ -30,7 +30,6 @@ dayjs.locale("ar");
 const formatDateForApi = (date) => dayjs(date).format("YYYY-MM-DD");
 
 // --- Reusable Components ---
-// These components are defined before the main App component as they are used within it.
 const Section = ({ title, icon: Icon, auditLog, children }) => (
   <div className="pt-4">
     {" "}
@@ -441,7 +440,13 @@ const EditSlotModal = ({
 );
 
 // NEW: Weekly Duty List Modal Component
-const WeeklyDutyListModal = ({ onClose }) => {
+const WeeklyDutyListModal = ({
+  onClose,
+  onEditWeeklyDuty,
+  allNames,
+  refreshTrigger,
+}) => {
+  // Added refreshTrigger prop
   const [weeklyDuties, setWeeklyDuties] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -462,7 +467,7 @@ const WeeklyDutyListModal = ({ onClose }) => {
       }
     };
     fetchUpcomingDuties();
-  }, []);
+  }, [refreshTrigger]); // Added refreshTrigger to dependency array
 
   return (
     <motion.div
@@ -520,7 +525,8 @@ const WeeklyDutyListModal = ({ onClose }) => {
                 {weeklyDuties.map((duty) => (
                   <tr
                     key={duty.week_start_date}
-                    className="hover:bg-gray-700 transition-colors"
+                    className="hover:bg-gray-700 transition-colors cursor-pointer"
+                    onClick={() => onEditWeeklyDuty(duty)}
                   >
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
                       {duty.week_number}
@@ -563,8 +569,92 @@ const WeeklyDutyListModal = ({ onClose }) => {
   );
 };
 
+// NEW: Edit Weekly Duty Modal Component
+const EditWeeklyDutyModal = ({
+  onClose,
+  isSubmitting,
+  handleOverrideWeeklyDuty,
+  duty,
+  allNames,
+}) => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+    className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+    onClick={onClose}
+  >
+    <motion.div
+      initial={{ y: -50, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: -50, opacity: 0 }}
+      className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex justify-between items-center">
+        <h3 className="text-2xl font-bold">
+          تعديل مناوبة الأسبوع رقم {duty.week_number}
+        </h3>
+        <button onClick={onClose} className="text-gray-400 hover:text-white">
+          <X />
+        </button>
+      </div>
+      <form onSubmit={handleOverrideWeeklyDuty} className="space-y-4">
+        <div>
+          <label
+            htmlFor="newName"
+            className="block text-sm font-medium text-gray-300 mb-1"
+          >
+            اختر اسماً جديداً
+          </label>
+          <select
+            id="newName"
+            name="newName"
+            defaultValue={duty.name_id}
+            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+          >
+            {allNames.map((name) => (
+              <option key={name.id} value={name.id}>
+                {name.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label
+            htmlFor="reason"
+            className="block text-sm font-medium text-gray-300 mb-1"
+          >
+            السبب
+          </label>
+          <input
+            id="reason"
+            name="reason"
+            type="text"
+            defaultValue={duty.reason || ""}
+            placeholder="سبب التعديل..."
+            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+            required
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
+        >
+          {isSubmitting ? (
+            <Loader className="animate-spin h-5 w-5" />
+          ) : (
+            <Edit className="h-5 w-5" />
+          )}
+          <span>حفظ التعديل</span>
+        </button>
+      </form>
+    </motion.div>
+  </motion.div>
+);
+
 // --- Main App Component ---
-// The App component definition should come AFTER all the reusable components it uses.
 export default function App() {
   // --- State Management ---
   const [selectedDate, setSelectedDate] = useState({
@@ -585,9 +675,16 @@ export default function App() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  // NEW: State for the weekly duty list modal
+  // State for the weekly duty list modal
   const [isWeeklyDutyListModalOpen, setIsWeeklyDutyListModalOpen] =
     useState(false);
+  // State for editing a weekly duty slot
+  const [isEditWeeklyDutyModalOpen, setIsEditWeeklyDutyModalOpen] =
+    useState(false);
+  const [editingWeeklyDuty, setEditingWeeklyDuty] = useState(null);
+  // NEW: State to trigger refresh of the weekly duty list modal
+  const [weeklyDutyListRefreshTrigger, setWeeklyDutyListRefreshTrigger] =
+    useState(0);
 
   const isFetchingRef = useRef(false);
 
@@ -626,6 +723,7 @@ export default function App() {
     fetchAllData();
   }, [selectedDate, isSubmitting]);
 
+  // Modified useEffect to fetch names only when needed
   useEffect(() => {
     const fetchMasterNames = async () => {
       try {
@@ -637,10 +735,11 @@ export default function App() {
         toast.error(error.message);
       }
     };
-    if (isRosterModalOpen || isEditModalOpen) {
+    // Fetch names if any of these modals are open
+    if (isRosterModalOpen || isEditModalOpen || isEditWeeklyDutyModalOpen) {
       fetchMasterNames();
     }
-  }, [isRosterModalOpen, isEditModalOpen]);
+  }, [isRosterModalOpen, isEditModalOpen, isEditWeeklyDutyModalOpen]);
 
   useEffect(() => {
     const timerId = setInterval(() => setCurrentTime(new Date()), 30000);
@@ -804,6 +903,7 @@ export default function App() {
         throw new Error(errData.error || "Failed to postpone duty.");
       }
       toast.success("تم ترحيل المناوبة الأسبوعية بنجاح!");
+      setWeeklyDutyListRefreshTrigger((prev) => prev + 1); // Trigger refresh for weekly duty list
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -814,6 +914,52 @@ export default function App() {
   const handleDateChange = (newValue) => {
     if (newValue && newValue.startDate) setSelectedDate(newValue);
     else toast.warn("يجب تحديد تاريخ لعرض الجدول.");
+  };
+
+  // Handler for opening the Edit Weekly Duty Modal
+  const handleOpenEditWeeklyDutyModal = (duty) => {
+    setEditingWeeklyDuty(duty);
+    setIsEditWeeklyDutyModalOpen(true);
+  };
+
+  // Handler for overriding a weekly duty slot
+  const handleOverrideWeeklyDuty = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const newNameId = formData.get("newName");
+    const reason = formData.get("reason");
+
+    if (!editingWeeklyDuty || !newNameId || !reason.trim()) {
+      return toast.error("الرجاء اختيار اسم وذكر سبب التعديل.");
+    }
+
+    setIsSubmitting(true);
+    setIsEditWeeklyDutyModalOpen(false); // Close the modal
+    try {
+      const res = await fetch("/api/weekly-duty/override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week_start_date: editingWeeklyDuty.week_start_date,
+          name_id: parseInt(newNameId),
+          reason: reason.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "فشل تعديل المناوبة الأسبوعية.");
+      }
+      toast.success("تم تعديل المناوبة الأسبوعية بنجاح!");
+      // Re-fetch all data to update the main UI, and trigger refresh for weekly duty list
+      setIsFetching(true);
+      setWeeklyDutyListRefreshTrigger((prev) => prev + 1); // Increment to trigger refresh in WeeklyDutyListModal
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setEditingWeeklyDuty(null);
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -869,7 +1015,7 @@ export default function App() {
               {" "}
               <Shuffle className="h-5 w-5" /> <span>إعادة توزيع الساعات</span>{" "}
             </motion.button>
-            {/* NEW: Button to open Weekly Duty List Modal */}
+            {/* Button to open Weekly Duty List Modal */}
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
@@ -961,10 +1107,23 @@ export default function App() {
             presentNames={presentNames}
           />
         )}
-        {/* NEW: Weekly Duty List Modal */}
+        {/* Weekly Duty List Modal */}
         {isWeeklyDutyListModalOpen && (
           <WeeklyDutyListModal
             onClose={() => setIsWeeklyDutyListModalOpen(false)}
+            onEditWeeklyDuty={handleOpenEditWeeklyDutyModal}
+            allNames={allNames}
+            refreshTrigger={weeklyDutyListRefreshTrigger} // Pass refresh trigger
+          />
+        )}
+        {/* Edit Weekly Duty Modal */}
+        {isEditWeeklyDutyModalOpen && editingWeeklyDuty && (
+          <EditWeeklyDutyModal
+            onClose={() => setIsEditWeeklyDutyModalOpen(false)}
+            isSubmitting={isSubmitting}
+            handleOverrideWeeklyDuty={handleOverrideWeeklyDuty}
+            duty={editingWeeklyDuty}
+            allNames={allNames}
           />
         )}
       </AnimatePresence>
