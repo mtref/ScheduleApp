@@ -17,6 +17,7 @@ import {
   ShieldAlert, // For On-Call
   Award,
   ListOrdered,
+  Download, // Import Download icon from lucide-react
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast, ToastContainer } from "react-toastify";
@@ -27,6 +28,8 @@ import advancedFormat from "dayjs/plugin/advancedFormat";
 dayjs.extend(weekday);
 dayjs.extend(advancedFormat);
 dayjs.locale("ar");
+
+import html2canvas from "html2canvas"; // Import html2canvas
 
 const formatDateForApi = (date) => dayjs(date).format("YYYY-MM-DD");
 
@@ -42,12 +45,16 @@ const arabicMonthNames = [
   "سبتمبر",
   "أكتوبر",
   "نوفمبر",
-  "ديسمبر",
+  "ديسمبر", // Ensure all commas are here.
 ];
 
 // --- Reusable Components ---
-const Section = ({ title, icon: Icon, auditLog, children }) => (
-  <div className="pt-4">
+const Section = (
+  { title, icon: Icon, auditLog, children, id } // Added id prop
+) => (
+  <div className="pt-4" id={id}>
+    {" "}
+    {/* id added here */}
     <div className="flex justify-between items-center mb-4">
       <h2 className="text-2xl font-bold flex items-center gap-3">
         <Icon className="h-7 w-7 text-gray-400" /> <span>{title}</span>
@@ -190,7 +197,6 @@ const WeeklyDutyCard = ({ duty, onEdit }) => (
   </motion.div>
 );
 
-// NEW COMPONENT: OnCallTable (Revised with Thursday as working day)
 const OnCallTable = ({ onCallData, weekStartDate }) => {
   const dayLabels = {
     sun: "الأحد",
@@ -208,11 +214,9 @@ const OnCallTable = ({ onCallData, weekStartDate }) => {
     );
   }
 
-  // Working days are now Sun-Thu
   const weekdaysData = onCallData.filter((d) =>
     ["sun", "mon", "tue", "wed", "thu"].includes(d.day)
   );
-  // Weekend days are now Fri-Sat
   const weekendsData = onCallData.filter((d) => ["fri", "sat"].includes(d.day));
 
   return (
@@ -661,127 +665,108 @@ const EditWeeklyDutyModal = ({
   handleOverrideWeeklyDuty,
   duty,
   allNames,
-}) => {
-  const [isOffWeekChecked, setIsOffWeekChecked] = useState(
-    duty.is_off_week === 1
-  );
-  const [selectedNameId, setSelectedNameId] = useState(duty.name_id);
-  const [reason, setReason] = useState(duty.reason || "");
-
-  useEffect(() => {
-    setIsOffWeekChecked(duty.is_off_week === 1);
-    setSelectedNameId(duty.name_id);
-    setReason(duty.reason || "");
-  }, [duty]);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    handleOverrideWeeklyDuty(e, isOffWeekChecked, selectedNameId, reason);
-  };
-
-  return (
+}) => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+    className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+    onClick={onClose}
+  >
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
-      onClick={onClose}
+      initial={{ y: -50, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: -50, opacity: 0 }}
+      className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
+      onClick={(e) => e.stopPropagation()}
     >
-      <motion.div
-        initial={{ y: -50, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: -50, opacity: 0 }}
-        className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex justify-between items-center">
-          <h3 className="text-2xl font-bold">
-            تعديل مناوبة الأسبوع رقم {duty.week_number}
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
-            <X />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label
-              htmlFor="isOffWeek"
-              className="flex items-center text-sm font-medium text-gray-300 mb-2 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                id="isOffWeek"
-                checked={isOffWeekChecked}
-                onChange={(e) => setIsOffWeekChecked(e.target.checked)}
-                className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2"
-              />
-              <span>إجازة أسبوعية (أسبوع إيقاف)</span>
-            </label>
-          </div>
-          <div
-            className={isOffWeekChecked ? "opacity-50 pointer-events-none" : ""}
+      <div className="flex justify-between items-center">
+        <h3 className="text-2xl font-bold">
+          تعديل مناوبة الأسبوع رقم {duty.week_number}
+        </h3>
+        <button onClick={onClose} className="text-gray-400 hover:text-white">
+          <X />
+        </button>
+      </div>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label
+            htmlFor="isOffWeek"
+            className="flex items-center text-sm font-medium text-gray-300 mb-2 cursor-pointer"
           >
-            <label
-              htmlFor="newName"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              اختر اسماً جديداً
-            </label>
-            <select
-              id="newName"
-              name="newName"
-              value={selectedNameId || ""}
-              onChange={(e) => setSelectedNameId(parseInt(e.target.value))}
-              className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-              disabled={isOffWeekChecked}
-            >
-              <option value="" disabled>
-                اختر اسماً
-              </option>
-              {allNames.map((name) => (
-                <option key={name.id} value={name.id}>
-                  {name.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label
-              htmlFor="reason"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              السبب
-            </label>
             <input
-              id="reason"
-              name="reason"
-              type="text"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="سبب التعديل..."
-              className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-              required
+              type="checkbox"
+              id="isOffWeek"
+              checked={isOffWeekChecked}
+              onChange={(e) => setIsOffWeekChecked(e.target.checked)}
+              className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2"
             />
-          </div>
-          <button
-            type="submit"
-            disabled={
-              isSubmitting || (isOffWeekChecked === false && !selectedNameId)
-            }
-            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
+            <span>إجازة أسبوعية (أسبوع إيقاف)</span>
+          </label>
+        </div>
+        <div
+          className={isOffWeekChecked ? "opacity-50 pointer-events-none" : ""}
+        >
+          <label
+            htmlFor="newName"
+            className="block text-sm font-medium text-gray-300 mb-1"
           >
-            {isSubmitting ? (
-              <Loader className="animate-spin h-5 w-5" />
-            ) : (
-              <Edit className="h-5 w-5" />
-            )}
-            <span>حفظ التعديل</span>
-          </button>
-        </form>
-      </motion.div>
+            اختر اسماً جديداً
+          </label>
+          <select
+            id="newName"
+            name="newName"
+            value={selectedNameId || ""}
+            onChange={(e) => setSelectedNameId(parseInt(e.target.value))}
+            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+            disabled={isOffWeekChecked}
+          >
+            <option value="" disabled>
+              اختر اسماً
+            </option>
+            {allNames.map((name) => (
+              <option key={name.id} value={name.id}>
+                {name.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label
+            htmlFor="reason"
+            className="block text-sm font-medium text-gray-300 mb-1"
+          >
+            السبب
+          </label>
+          <input
+            id="reason"
+            name="reason"
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="سبب التعديل..."
+            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+            required
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={
+            isSubmitting || (isOffWeekChecked === false && !selectedNameId)
+          }
+          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
+        >
+          {isSubmitting ? (
+            <Loader className="animate-spin h-5 w-5" />
+          ) : (
+            <Edit className="h-5 w-5" />
+          )}
+          <span>حفظ التعديل</span>
+        </button>
+      </form>
     </motion.div>
-  );
-};
+  </motion.div>
+);
 
 // --- Main App Component ---
 export default function App() {
@@ -814,6 +799,9 @@ export default function App() {
     useState(0);
 
   const isFetchingRef = useRef(false);
+  // NEW: Refs for the content to export (specifically the sections you want)
+  const onCallSectionRef = useRef(null);
+  const weeklyDutySectionRef = useRef(null);
 
   const timeSlots = useMemo(() => [8, 9, 10, 11, 12, 13], []);
 
@@ -1121,9 +1109,73 @@ export default function App() {
     }
   };
 
+  // NEW FUNCTION: handleExportAsImage (Captures only On-Call and Weekly Duty sections)
+  const handleExportAsImage = async () => {
+    const onCallSection = document.getElementById("on-call-section");
+    const weeklyDutySection = document.getElementById("weekly-duty-section");
+
+    if (!onCallSection && !weeklyDutySection) {
+      toast.error("خطأ: لم يتم العثور على أي أقسام لتصديرها كصورة.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    toast.info("جاري تجهيز الصورة...", { autoClose: 1500 });
+
+    try {
+      // Create a temporary div to hold the content we want to capture
+      const tempContainer = document.createElement("div");
+      tempContainer.style.background = "#1a202c"; // Set a background color for the capture
+      tempContainer.style.padding = "20px"; // Add some padding
+      tempContainer.style.width = "fit-content"; // Adjust width to content
+      tempContainer.style.position = "absolute"; // Position off-screen
+      tempContainer.style.left = "-9999px";
+      tempContainer.style.top = "-9999px";
+      tempContainer.style.zIndex = "-1"; // Ensure it doesn't flash on screen
+
+      // Clone and append the desired sections
+      // Use cloneNode(true) to ensure all children and their styles are copied
+      if (onCallSection) {
+        const clonedOnCall = onCallSection.cloneNode(true);
+        tempContainer.appendChild(clonedOnCall);
+      }
+      if (weeklyDutySection) {
+        const clonedWeeklyDuty = weeklyDutySection.cloneNode(true);
+        tempContainer.appendChild(clonedWeeklyDuty);
+      }
+
+      document.body.appendChild(tempContainer); // Add to DOM for html2canvas
+
+      const canvas = await html2canvas(tempContainer, {
+        useCORS: true,
+        scale: 2, // Increase scale for better resolution
+        logging: false,
+        backgroundColor: null, // Allow temporary container's background to show
+      });
+
+      const image = canvas.toDataURL("image/png");
+      const link = document.createElement("a");
+      link.href = image;
+      const formattedDate = dayjs(selectedDate.startDate).format("YYYY-MM-DD");
+      link.download = `جدول_المناوبات_${formattedDate}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link); // Remove the link
+      document.body.removeChild(tempContainer); // Clean up the temporary div
+
+      toast.success("تم تصدير الجدول كصورة بنجاح!");
+    } catch (error) {
+      console.error("Error exporting as image:", error);
+      toast.error("فشل تصدير الجدول كصورة.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <>
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-4 font-elmessiri">
+        {/* We don't need a ref on this div if we're targeting specific sections by ID */}
         <div className="w-full max-w-4xl bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 space-y-6">
           <div className="text-center space-y-2">
             <motion.div
@@ -1180,6 +1232,17 @@ export default function App() {
               <ListOrdered className="h-5 w-5" />
               <span>عرض المناوبات القادمة</span>
             </motion.button>
+            {/* NEW: Export as Image Button */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleExportAsImage}
+              disabled={isSubmitting || isFetching} // Disable if already doing something or fetching
+              className="w-full md:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-md transition-colors"
+            >
+              <Download className="h-5 w-5" />
+              <span>تصدير كصورة</span>
+            </motion.button>
           </div>
 
           <div className="space-y-8">
@@ -1216,8 +1279,12 @@ export default function App() {
               )}
             </Section>
 
-            {/* NEW SECTION FOR ON-CALL TABLE */}
-            <Section title="جدول المناوبات الإضافية" icon={ShieldAlert}>
+            {/* NEW SECTION FOR ON-CALL TABLE - WITH ID */}
+            <Section
+              id="on-call-section"
+              title="جدول المناوبات الإضافية"
+              icon={ShieldAlert}
+            >
               {isFetching ? (
                 <Spinner />
               ) : onCallSchedule.length > 0 &&
@@ -1233,7 +1300,12 @@ export default function App() {
               )}
             </Section>
 
-            <Section title="مناوبة الأسبوع" icon={Award}>
+            {/* WEEKLY DUTY SECTION - WITH ID */}
+            <Section
+              id="weekly-duty-section"
+              title="مناوبة الأسبوع"
+              icon={Award}
+            >
               {isFetching ? (
                 <Spinner />
               ) : weeklyDuty ? (
@@ -1246,8 +1318,10 @@ export default function App() {
               )}
             </Section>
           </div>
-        </div>
-      </div>
+        </div>{" "}
+        {/* end of main content div */}
+      </div>{" "}
+      {/* end of min-h-screen div */}
       <AnimatePresence>
         {isRosterModalOpen && (
           <RosterAbsenceModal
