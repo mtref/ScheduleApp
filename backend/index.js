@@ -21,7 +21,7 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// --- Helper for async DB calls ---
+// --- Helper for async DB calls --
 const dbAll = (sql, params = []) =>
   new Promise((resolve, reject) =>
     db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
@@ -75,6 +75,25 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
           FOREIGN KEY (original_name_id) REFERENCES names(id) ON DELETE SET NULL
         )`
       );
+      // NEW TABLE: oncall_schedule
+      db.run(
+        `CREATE TABLE IF NOT EXISTS oncall_schedule (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              week_start_date TEXT NOT NULL,
+              day_of_week TEXT NOT NULL, -- 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'
+              name_id INTEGER NOT NULL,
+              UNIQUE (week_start_date, day_of_week),
+              FOREIGN KEY (name_id) REFERENCES names(id) ON DELETE CASCADE
+          )`
+      );
+      // NEW TABLE: oncall_rotation_state (to persist the last assigned person in the global rotation)
+      db.run(
+        `CREATE TABLE IF NOT EXISTS oncall_rotation_state (
+              id INTEGER PRIMARY KEY DEFAULT 1, -- Only one row in this table
+              last_assigned_name_id INTEGER NOT NULL,
+              FOREIGN KEY (last_assigned_name_id) REFERENCES names(id) ON DELETE RESTRICT
+          )`
+      );
 
       const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
       const insertNameStmt = db.prepare(
@@ -82,6 +101,42 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
       );
       initialNames.forEach((name) => insertNameStmt.run(name));
       insertNameStmt.finalize();
+
+      // Initialize oncall_rotation_state if no record exists
+      db.get(
+        `SELECT COUNT(*) as count FROM oncall_rotation_state`,
+        (err, row) => {
+          if (err) {
+            console.error("Error checking oncall_rotation_state:", err.message);
+            return;
+          }
+          if (row.count === 0) {
+            db.get(
+              `SELECT id FROM names ORDER BY id ASC LIMIT 1`,
+              (err, nameRow) => {
+                if (err || !nameRow) {
+                  console.warn(
+                    "No names found to initialize oncall_rotation_state."
+                  );
+                  return;
+                }
+                db.run(
+                  `INSERT INTO oncall_rotation_state (id, last_assigned_name_id) VALUES (1, ?)`,
+                  [nameRow.id],
+                  (err) => {
+                    if (err)
+                      console.error(
+                        "Error initializing oncall_rotation_state:",
+                        err.message
+                      );
+                    else console.log("oncall_rotation_state initialized.");
+                  }
+                );
+              }
+            );
+          }
+        }
+      );
     });
 
     app.listen(PORT, () => {
@@ -169,7 +224,7 @@ app.get("/api/daily-data", async (req, res) => {
     return res.status(400).json({ error: "Valid date query is required." });
   }
   try {
-    await regenerateAll(date);
+    await regenerateAll(date); // This will populate/maintain basic weekly and on-call duties
 
     const hourlyQuery = `SELECT hs.scheduled_time, hs.is_edited, hs.reason, n.name, hs.name_id, o.name as original_name FROM hourly_schedule hs JOIN names n ON hs.name_id = n.id LEFT JOIN names o ON hs.original_name_id = o.id WHERE hs.scheduled_date = ? ORDER BY hs.scheduled_time ASC`;
     const gateQuery = `SELECT main.id as main_id, main.name as main_name, backup.id as backup_id, backup.name as backup_name FROM gate_assignments ga JOIN names main ON ga.main_name_id = main.id LEFT JOIN names backup ON ga.backup_name_id = backup.id WHERE ga.assignment_date = ?`;
@@ -255,67 +310,6 @@ app.post("/api/schedule/override", async (req, res) => {
   }
 });
 
-// Removed /api/weekly-duty/postpone endpoint and its logic
-/*
-app.post("/api/weekly-duty/postpone", async (req, res) => {
-  const { week_start_date } = req.body;
-  if (!week_start_date)
-    return res.status(400).json({ error: "Week start date is required." });
-
-  try {
-    const allNames = await dbAll(`SELECT * FROM names ORDER BY id ASC`);
-    const duties = await dbAll(
-      `SELECT * FROM weekly_duty WHERE week_start_date >= ? ORDER BY week_start_date ASC`,
-      [week_start_date]
-    );
-
-    if (duties.length < 2)
-      return res
-        .status(400)
-        .json({ error: "Not enough future duties to postpone." });
-
-    const personToPostpone = duties[0].name_id;
-
-    await dbRun("BEGIN TRANSACTION");
-
-    // Shift all future duties up by one week
-    for (let i = 0; i < duties.length - 1; i++) {
-      const currentWeek = duties[i];
-      const nextWeek = duties[i + 1];
-      await dbRun(
-        "UPDATE weekly_duty SET name_id = ?, is_edited = ?, original_name_id = ?, reason = ?, is_off_week = ? WHERE week_start_date = ?",
-        [
-          nextWeek.name_id,
-          nextWeek.is_edited,
-          nextWeek.original_name_id,
-          nextWeek.reason,
-          nextWeek.is_off_week,
-          currentWeek.week_start_date,
-        ]
-      );
-    }
-
-    // Assign the postponed person to the last available slot
-    const lastWeek = duties[duties.length - 1];
-    await dbRun(
-      "UPDATE weekly_duty SET name_id = ?, is_edited = 0, original_name_id = NULL, reason = NULL, is_off_week = 0 WHERE week_start_date = ?",
-      [personToPostpone, lastWeek.week_start_date]
-    );
-
-    await dbRun("COMMIT");
-
-    await regenerateWeeklyDuty(week_start_date, allNames);
-
-    res.status(200).json({ message: "Weekly duty postponed successfully." });
-  } catch (err) {
-    await dbRun("ROLLBACK");
-    res
-      .status(500)
-      .json({ error: "Failed to postpone weekly duty.", details: err.message });
-  }
-});
-*/
-
 app.get("/api/weekly-duties/upcoming", async (req, res) => {
   const { count = 12 } = req.query;
   try {
@@ -348,45 +342,64 @@ app.post("/api/weekly-duty/override", async (req, res) => {
     });
   }
 
-  const isOffWeekInt = is_off_week ? 1 : 0;
-  const actualNameId = isOffWeekInt === 1 ? null : name_id;
+  const newIsOffWeekInt = is_off_week ? 1 : 0;
+  const actualNameId = newIsOffWeekInt === 1 ? null : name_id;
 
   try {
     await dbRun("BEGIN TRANSACTION;");
 
     const row = await dbGet(
-      "SELECT id, name_id, is_edited, original_name_id FROM weekly_duty WHERE week_start_date = ?",
+      "SELECT id, name_id, is_edited, original_name_id, is_off_week FROM weekly_duty WHERE week_start_date = ?",
       [week_start_date]
     );
 
+    const oldIsOffWeekInt = row ? row.is_off_week : 0;
+
+    let originalNameIdToSave = null;
+    if (row && row.is_edited === 0 && row.name_id !== actualNameId) {
+      originalNameIdToSave = row.name_id;
+    } else if (row && row.is_edited === 1) {
+      originalNameIdToSave = row.original_name_id;
+    }
+
     if (row) {
       await dbRun(
-        `UPDATE weekly_duty SET name_id = ?, reason = ?, original_name_id = CASE WHEN is_edited = 0 THEN ? ELSE original_name_id END, is_edited = 1, is_off_week = ? WHERE id = ?;`,
-        [actualNameId, reason, row.name_id, isOffWeekInt, row.id]
+        `UPDATE weekly_duty SET name_id = ?, reason = ?, original_name_id = ?, is_edited = 1, is_off_week = ? WHERE id = ?;`,
+        [actualNameId, reason, originalNameIdToSave, newIsOffWeekInt, row.id]
       );
     } else {
       await dbRun(
-        `INSERT INTO weekly_duty (week_start_date, name_id, is_edited, reason, is_off_week, week_number) VALUES (?, ?, 1, ?, ?, ?);`,
+        `INSERT INTO weekly_duty (week_start_date, name_id, is_edited, reason, is_off_week, week_number, original_name_id) VALUES (?, ?, 1, ?, ?, ?, ?);`,
         [
           week_start_date,
           actualNameId,
           reason,
-          isOffWeekInt,
+          newIsOffWeekInt,
           dayjs(week_start_date).isoWeek(),
+          null,
         ]
       );
     }
 
-    // Delete all *non-edited* duties from this week onwards to allow re-shifting
-    await dbRun(
-      `DELETE FROM weekly_duty WHERE week_start_date >= ? AND is_edited = 0;`,
-      [week_start_date]
-    );
+    const isOffWeekStatusChanging = oldIsOffWeekInt !== newIsOffWeekInt;
 
-    await regenerateWeeklyDuty(
-      week_start_date,
-      await dbAll(`SELECT * FROM names ORDER BY id`)
-    );
+    if (isOffWeekStatusChanging) {
+      console.log(
+        `Off-week status changed for ${week_start_date}. Deleting auto-generated future duties for re-shift.`
+      );
+      await dbRun(
+        `DELETE FROM weekly_duty WHERE week_start_date > ? AND is_edited = 0;`,
+        [week_start_date]
+      );
+      await regenerateWeeklyDuty(
+        week_start_date,
+        await dbAll(`SELECT * FROM names ORDER BY id`)
+      );
+    } else {
+      console.log(
+        `Off-week status NOT changed for ${week_start_date}. Performing direct override, no future shift triggered here.`
+      );
+    }
 
     await dbRun("COMMIT;");
     res.status(200).json({ message: "Weekly duty slot updated successfully." });
@@ -397,6 +410,59 @@ app.post("/api/weekly-duty/override", async (req, res) => {
       error: "Failed to override weekly duty slot.",
       details: err.message,
     });
+  }
+});
+
+// NEW API ENDPOINT: Fetch On-Call Table Data
+app.get("/api/oncall-table", async (req, res) => {
+  const { date } = req.query; // Date for which to fetch the week's on-call
+  if (!date) return res.status(400).json({ error: "Date is required." });
+
+  try {
+    const startOfWeek = dayjs(date).startOf("isoWeek").format("YYYY-MM-DD");
+
+    const onCallQuery = `
+            SELECT
+                ocs.day_of_week,
+                n.name AS assigned_name,
+                n.id AS name_id
+            FROM
+                oncall_schedule ocs
+            JOIN
+                names n ON ocs.name_id = n.id
+            WHERE
+                ocs.week_start_date = ?
+            ORDER BY
+                CASE ocs.day_of_week
+                    WHEN 'sun' THEN 1
+                    WHEN 'mon' THEN 2
+                    WHEN 'tue' THEN 3
+                    WHEN 'wed' THEN 4
+                    WHEN 'thu' THEN 5
+                    WHEN 'fri' THEN 6
+                    WHEN 'sat' THEN 7
+                    ELSE 8
+                END;
+        `;
+    const rows = await dbAll(onCallQuery, [startOfWeek]);
+
+    // Ensure all 7 days are present, even if no assignment found in DB
+    const DAYS_OF_WEEK_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const formattedSchedule = DAYS_OF_WEEK_KEYS.map((dayKey) => {
+      const found = rows.find((row) => row.day_of_week === dayKey);
+      return {
+        day: dayKey,
+        name: found ? found.assigned_name : "غير محدد",
+        name_id: found ? found.name_id : null,
+      };
+    });
+
+    res.json({ data: formattedSchedule, weekStartDate: startOfWeek });
+  } catch (err) {
+    console.error("Error fetching on-call table:", err.message);
+    res
+      .status(500)
+      .json({ error: "Failed to fetch on-call table.", details: err.message });
   }
 });
 
@@ -413,6 +479,7 @@ async function regenerateAll(date) {
   await regenerateGateAssignment(date, presentNames);
   await regenerateHourlySchedule(date, 0, null, null, presentNames);
   await regenerateWeeklyDuty(date, allNames);
+  await generateOnCallSchedule(date, allNames); // NEW: Generate On-Call Schedule
 }
 
 async function regenerateGateAssignment(date, presentNames) {
@@ -510,7 +577,6 @@ async function regenerateHourlySchedule(
   }
 }
 
-// Updated regenerateWeeklyDuty logic
 async function regenerateWeeklyDuty(triggerDate, allNames) {
   if (allNames.length === 0) return;
 
@@ -522,18 +588,24 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
   const allExistingDuties = await dbAll(
     `SELECT * FROM weekly_duty ORDER BY week_start_date ASC`
   );
-  const editedDutiesMap = new Map();
+  const fixedDutiesMap = new Map();
+  const allExistingMap = new Map();
   allExistingDuties.forEach((duty) => {
+    allExistingMap.set(duty.week_start_date, duty);
     if (duty.is_edited === 1) {
-      editedDutiesMap.set(duty.week_start_date, duty);
+      fixedDutiesMap.set(duty.week_start_date, duty);
     }
   });
-  console.log("Edited duties map (only truly edited):", editedDutiesMap);
+  console.log(
+    "Fixed duties map (only manually edited/off-weeks):",
+    fixedDutiesMap
+  );
+  console.log("All existing duties map:", allExistingMap);
 
   let lastAssignedPersonId = null;
 
   const mostRecentActualDutyBeforeTrigger = await dbGet(
-    `SELECT name_id FROM weekly_duty WHERE is_off_week = 0 AND name_id IS NOT NULL AND week_start_date < ? ORDER BY week_start_date DESC LIMIT 1`,
+    `SELECT name_id, is_edited, is_off_week FROM weekly_duty WHERE name_id IS NOT NULL AND week_start_date < ? AND is_off_week = 0 ORDER BY week_start_date DESC LIMIT 1`,
     [startOfWeekForTrigger.format("YYYY-MM-DD")]
   );
 
@@ -544,6 +616,7 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
       lastAssignedPersonId = allNames[0].id;
     }
   }
+
   console.log(
     `Initial lastAssignedPersonId for rotation: ${lastAssignedPersonId}`
   );
@@ -557,72 +630,245 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
 
     console.log(`Processing week: ${weekStartDate} (Week No: ${weekNumber})`);
 
-    const existingEditedRecord = editedDutiesMap.get(weekStartDate);
+    const existingFixedRecord = fixedDutiesMap.get(weekStartDate);
+    const existingAnyRecord = allExistingMap.get(weekStartDate);
 
-    if (existingEditedRecord) {
+    if (existingFixedRecord) {
       console.log(
-        `  Existing MANUALLY EDITED record found for ${weekStartDate}:`,
-        existingEditedRecord
+        `  Existing MANUALLY EDITED/FIXED record found for ${weekStartDate}:`,
+        existingFixedRecord
       );
       if (
-        existingEditedRecord.is_off_week === 0 &&
-        existingEditedRecord.name_id !== null
+        existingFixedRecord.is_off_week === 0 &&
+        existingFixedRecord.name_id !== null
       ) {
-        lastAssignedPersonId = existingEditedRecord.name_id;
+        lastAssignedPersonId = existingFixedRecord.name_id;
         console.log(
-          `  Updated lastAssignedPersonId based on preserved edited week: ${lastAssignedPersonId}`
+          `  Updated lastAssignedPersonId based on preserved fixed week: ${lastAssignedPersonId}`
         );
-      } else if (existingEditedRecord.is_off_week === 1) {
+      } else if (existingFixedRecord.is_off_week === 1) {
         console.log(
-          `  Skipping over manually set off-week: ${weekStartDate}. Rotation will effectively skip this "turn."`
+          `  Skipping over fixed off-week: ${weekStartDate}. Rotation will effectively skip this "turn."`
         );
       }
       continue;
     }
 
-    let newDutyPersonId = null;
+    if (
+      existingAnyRecord &&
+      existingAnyRecord.is_edited === 0 &&
+      existingAnyRecord.name_id !== null &&
+      existingAnyRecord.is_off_week === 0
+    ) {
+      console.log(
+        `  Existing auto-generated record is correctly populated. Keeping as is. New lastAssignedPersonId: ${existingAnyRecord.name_id}`
+      );
+      lastAssignedPersonId = existingAnyRecord.name_id;
+      continue;
+    }
+
+    let expectedDutyPersonId = null;
     if (lastAssignedPersonId !== null) {
       const lastIndex = allNames.findIndex(
         (n) => n.id === lastAssignedPersonId
       );
       const nextIndex = (lastIndex + 1) % allNames.length;
-      newDutyPersonId = allNames[nextIndex].id;
-      console.log(
-        `  Calculating newDutyPersonId: lastIndex=${lastIndex}, nextIndex=${nextIndex}, newId=${newDutyPersonId}`
-      );
+      expectedDutyPersonId = allNames[nextIndex].id;
+      console.log(`  Calculated expectedDutyPersonId: ${expectedDutyPersonId}`);
     } else if (allNames.length > 0) {
-      newDutyPersonId = allNames[0].id;
-      console.log(`  Starting with first person: ${newDutyPersonId}`);
+      expectedDutyPersonId = allNames[0].id;
+      console.log(
+        `  Calculated expectedDutyPersonId: (starting) ${expectedDutyPersonId}`
+      );
     }
 
-    if (newDutyPersonId) {
-      // Use INSERT OR REPLACE to update existing auto-generated entries or insert new ones.
-      console.log(
-        `  INSERT OR REPLACE for ${weekStartDate}: name_id=${newDutyPersonId}, week_number=${weekNumber}`
-      );
-      try {
-        await dbRun(
-          `INSERT OR REPLACE INTO weekly_duty (week_start_date, name_id, week_number, is_edited, is_off_week, original_name_id, reason)
-                 VALUES (?, ?, ?, 0, 0, NULL, NULL)`,
-          [weekStartDate, newDutyPersonId, weekNumber]
-        );
-        lastAssignedPersonId = newDutyPersonId;
+    if (expectedDutyPersonId) {
+      if (existingAnyRecord) {
         console.log(
-          `  Successfully inserted/replaced. New lastAssignedPersonId: ${lastAssignedPersonId}`
+          `  Updating existing auto-generated (possibly NULL/incorrect) for ${weekStartDate}: name_id=${expectedDutyPersonId}`
         );
-      } catch (err) {
-        console.error(
-          "Failed to insert/replace weekly duty slot:",
-          err.message
+        try {
+          await dbRun(
+            `UPDATE weekly_duty SET name_id = ?, week_number = ?, is_edited = 0, is_off_week = 0, original_name_id = NULL, reason = NULL WHERE week_start_date = ?;`,
+            [expectedDutyPersonId, weekNumber, weekStartDate]
+          );
+          lastAssignedPersonId = expectedDutyPersonId;
+          console.log(
+            `  Successfully UPDATED auto-generated. New lastAssignedPersonId: ${lastAssignedPersonId}`
+          );
+        } catch (err) {
+          console.error(
+            "Failed to update auto-generated weekly duty slot:",
+            err.message
+          );
+        }
+      } else {
+        console.log(
+          `  INSERTING new auto-generated entry for ${weekStartDate}: name_id=${expectedDutyPersonId}, week_number=${weekNumber}`
         );
+        try {
+          await dbRun(
+            `INSERT INTO weekly_duty (week_start_date, name_id, week_number, is_edited, is_off_week, original_name_id, reason)
+                     VALUES (?, ?, ?, 0, 0, NULL, NULL)`,
+            [weekStartDate, expectedDutyPersonId, weekNumber]
+          );
+          lastAssignedPersonId = expectedDutyPersonId;
+          console.log(
+            `  Successfully INSERTED new auto-generated. New lastAssignedPersonId: ${lastAssignedPersonId}`
+          );
+        } catch (err) {
+          console.error("Failed to insert new weekly duty slot:", err.message);
+        }
       }
     } else {
       console.log(
-        `  No newDutyPersonId for ${weekStartDate}. This might happen if 'allNames' is empty.`
+        `  No expectedDutyPersonId for ${weekStartDate}. (Could happen if allNames is empty)`
       );
     }
   }
   console.log(`--- End Regenerate Weekly Duty ---`);
+}
+
+// NEW FUNCTION: generateOnCallSchedule
+const DAYS_OF_WEEK_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+async function generateOnCallSchedule(triggerDate, allNames) {
+  if (allNames.length === 0) {
+    console.log("No names available to generate on-call schedule.");
+    return;
+  }
+
+  const WEEKS_TO_GENERATE_ONCALL = 52; // Generate for a year
+  const startDateForGeneration = dayjs(triggerDate).startOf("isoWeek");
+
+  console.log(
+    `--- Generating On-Call Schedule for triggerDate: ${triggerDate} ---`
+  );
+
+  // Get the last assigned person in the global rotation
+  let lastGlobalOnCallPersonId = null;
+  const rotationState = await dbGet(
+    `SELECT last_assigned_name_id FROM oncall_rotation_state WHERE id = 1`
+  );
+  if (rotationState) {
+    lastGlobalOnCallPersonId = rotationState.last_assigned_name_id;
+  } else {
+    // Initialize if no state exists
+    lastGlobalOnCallPersonId = allNames[0].id;
+    try {
+      await dbRun(
+        `INSERT INTO oncall_rotation_state (id, last_assigned_name_id) VALUES (1, ?)`,
+        [lastGlobalOnCallPersonId]
+      );
+      console.log(
+        `Initialized oncall_rotation_state with: ${lastGlobalOnCallPersonId}`
+      );
+    } catch (err) {
+      console.error("Error initializing oncall_rotation_state:", err.message);
+    }
+  }
+
+  // Fetch all existing on-call entries to avoid overwriting or to continue rotation correctly
+  const existingOnCallEntries = await dbAll(
+    `SELECT week_start_date, day_of_week, name_id FROM oncall_schedule ORDER BY week_start_date ASC`
+  );
+  const existingOnCallMap = new Map(); // Key: `${week_start_date}-${day_of_week}`
+  existingOnCallEntries.forEach((entry) => {
+    existingOnCallMap.set(
+      `${entry.week_start_date}-${entry.day_of_week}`,
+      entry
+    );
+  });
+  console.log("Existing On-Call entries:", existingOnCallMap.size);
+
+  let currentRotationPersonId = lastGlobalOnCallPersonId; // This person will be assigned to the first slot of the first generated week's Sunday
+
+  // If there are existing entries from *before* our generation start date,
+  // we need to find the *true* last assigned person from that historical data
+  // to correctly seed `currentRotationPersonId` for the first week we're generating.
+  const mostRecentOnCallEntry = await dbGet(
+    `SELECT week_start_date, day_of_week, name_id FROM oncall_schedule ORDER BY week_start_date DESC,
+            CASE day_of_week
+                WHEN 'sun' THEN 1 WHEN 'mon' THEN 2 WHEN 'tue' THEN 3 WHEN 'wed' THEN 4
+                WHEN 'thu' THEN 5 WHEN 'fri' THEN 6 WHEN 'sat' THEN 7 ELSE 8
+            END DESC LIMIT 1`
+  );
+
+  if (mostRecentOnCallEntry) {
+    currentRotationPersonId = mostRecentOnCallEntry.name_id;
+    console.log(
+      `Seeding currentRotationPersonId from most recent on-call entry: ${currentRotationPersonId}`
+    );
+  } else {
+    // If no on-call entries exist at all, start from the very first person.
+    currentRotationPersonId = allNames[0].id;
+    console.log(
+      `No prior on-call entries, starting currentRotationPersonId from first name: ${currentRotationPersonId}`
+    );
+  }
+
+  for (let i = 0; i < WEEKS_TO_GENERATE_ONCALL; i++) {
+    const currentWeekStartDate = dayjs(startDateForGeneration)
+      .add(i, "week")
+      .startOf("isoWeek")
+      .format("YYYY-MM-DD");
+
+    for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+      // Iterate Sun (0) to Sat (6)
+      const dayKey = DAYS_OF_WEEK_KEYS[dayIndex];
+      const uniqueKey = `${currentWeekStartDate}-${dayKey}`;
+
+      // Check if this specific day's slot already has an assignment in the DB
+      if (existingOnCallMap.has(uniqueKey)) {
+        // If it exists, update the `currentRotationPersonId` to this person
+        // to correctly continue the global sequence for the *next* slot.
+        currentRotationPersonId = existingOnCallMap.get(uniqueKey).name_id;
+        // console.log(`  Skipping existing on-call for ${uniqueKey}, updating currentRotationPersonId to ${currentRotationPersonId}`);
+        continue; // Skip insertion for this slot as it's already populated
+      }
+
+      // If we are here, the slot needs to be assigned.
+      // Get the next person in the overall rotation.
+      const lastIndex = allNames.findIndex(
+        (n) => n.id === currentRotationPersonId
+      );
+      const nextIndex = (lastIndex + 1) % allNames.length;
+      const nextPersonId = allNames[nextIndex].id;
+
+      try {
+        await dbRun(
+          `INSERT OR IGNORE INTO oncall_schedule (week_start_date, day_of_week, name_id) VALUES (?, ?, ?)`,
+          [currentWeekStartDate, dayKey, nextPersonId]
+        );
+        // Only update currentRotationPersonId if the insert was actually performed
+        // (INSERT OR IGNORE won't throw if it already exists, so we assume it was inserted)
+        currentRotationPersonId = nextPersonId;
+        console.log(
+          `  Assigned ${
+            allNames.find((n) => n.id === nextPersonId).name
+          } to ${dayKey} for ${currentWeekStartDate}`
+        );
+      } catch (err) {
+        // This catch block handles actual errors like schema issues, not UNIQUE constraints for INSERT OR IGNORE
+        console.error(
+          `  Error inserting on-call for ${uniqueKey}:`,
+          err.message
+        );
+      }
+    }
+  }
+  // After generating for all weeks, update the global rotation state for future runs
+  try {
+    await dbRun(
+      `UPDATE oncall_rotation_state SET last_assigned_name_id = ? WHERE id = 1`,
+      [currentRotationPersonId]
+    );
+    console.log(
+      `Final oncall_rotation_state updated to: ${currentRotationPersonId}`
+    );
+  } catch (err) {
+    console.error("Error updating oncall_rotation_state:", err.message);
+  }
 }
 
 // --- Serve Frontend ---

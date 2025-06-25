@@ -14,7 +14,7 @@ import {
   Edit,
   History,
   ShieldCheck,
-  ShieldAlert,
+  ShieldAlert, // For On-Call
   Award,
   ListOrdered,
 } from "lucide-react";
@@ -23,9 +23,9 @@ import { toast, ToastContainer } from "react-toastify";
 import dayjs from "dayjs";
 import "dayjs/locale/ar";
 import weekday from "dayjs/plugin/weekday";
-import advancedFormat from "dayjs/plugin/advancedFormat"; // Keep this, it's harmless
+import advancedFormat from "dayjs/plugin/advancedFormat";
 dayjs.extend(weekday);
-dayjs.extend(advancedFormat); // Keep this, it's harmless
+dayjs.extend(advancedFormat);
 dayjs.locale("ar");
 
 const formatDateForApi = (date) => dayjs(date).format("YYYY-MM-DD");
@@ -189,6 +189,86 @@ const WeeklyDutyCard = ({ duty, onEdit }) => (
     </div>
   </motion.div>
 );
+
+// NEW COMPONENT: OnCallTable (Revised with Thursday as working day)
+const OnCallTable = ({ onCallData, weekStartDate }) => {
+  const dayLabels = {
+    sun: "الأحد",
+    mon: "الاثنين",
+    tue: "الثلاثاء",
+    wed: "الأربعاء",
+    thu: "الخميس",
+    fri: "الجمعة",
+    sat: "السبت",
+  };
+
+  if (!onCallData || onCallData.length === 0) {
+    return (
+      <EmptyState text="لا يمكن تحديد جدول المناوبات الإضافية لهذا الأسبوع." />
+    );
+  }
+
+  // Working days are now Sun-Thu
+  const weekdaysData = onCallData.filter((d) =>
+    ["sun", "mon", "tue", "wed", "thu"].includes(d.day)
+  );
+  // Weekend days are now Fri-Sat
+  const weekendsData = onCallData.filter((d) => ["fri", "sat"].includes(d.day));
+
+  return (
+    <div className="bg-gray-700 rounded-lg p-4 shadow-lg text-white">
+      <h3 className="text-xl font-bold mb-4 text-center">
+        جدول المناوبات الإضافية - الأسبوع يبدأ{" "}
+        {dayjs(weekStartDate).format("DD/MM/YYYY")}
+      </h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Working Days Section (Sun-Thu) */}
+        <div>
+          <h4 className="text-lg font-semibold text-blue-300 mb-3 border-b border-gray-600 pb-2">
+            أيام العمل (الأحد - الخميس)
+          </h4>
+          <div className="space-y-2">
+            {weekdaysData.map((entry) => (
+              <div
+                key={entry.day}
+                className="flex justify-between items-center bg-gray-800 p-3 rounded-md"
+              >
+                <span className="font-medium text-gray-300">
+                  {dayLabels[entry.day]}
+                </span>
+                <span className="font-tajawal text-lg font-bold text-white">
+                  {entry.name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Weekend Days Section (Fri-Sat) */}
+        <div>
+          <h4 className="text-lg font-semibold text-purple-300 mb-3 border-b border-gray-600 pb-2">
+            أيام نهاية الأسبوع (الجمعة - السبت)
+          </h4>
+          <div className="space-y-2">
+            {weekendsData.map((entry) => (
+              <div
+                key={entry.day}
+                className="flex justify-between items-center bg-gray-800 p-3 rounded-md"
+              >
+                <span className="font-medium text-gray-300">
+                  {dayLabels[entry.day]}
+                </span>
+                <span className="font-tajawal text-lg font-bold text-white">
+                  {entry.name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // --- Sub-Components for Modals ---
 const RosterAbsenceModal = ({
@@ -712,6 +792,7 @@ export default function App() {
   const [hourlySchedule, setHourlySchedule] = useState([]);
   const [gateAssignment, setGateAssignment] = useState(null);
   const [weeklyDuty, setWeeklyDuty] = useState(null);
+  const [onCallSchedule, setOnCallSchedule] = useState([]);
   const [auditLog, setAuditLog] = useState(null);
   const [allNames, setAllNames] = useState([]);
   const [absences, setAbsences] = useState([]);
@@ -743,17 +824,42 @@ export default function App() {
       isFetchingRef.current = true;
       setIsFetching(true);
       try {
-        const dateStr = formatDateForApi(selectedDate.startDate);
-        const res = await fetch(`/api/daily-data?date=${dateStr}`);
-        if (!res.ok) throw new Error("Failed to fetch daily data.");
-        const result = await res.json();
-        console.log("Frontend received weeklyDuty:", result.weeklyDuty);
+        const dateObj = selectedDate.startDate;
+        const dateStr = formatDateForApi(dateObj);
+        const startOfWeekForOnCallFetch = dayjs(dateObj)
+          .startOf("isoWeek")
+          .format("YYYY-MM-DD");
 
-        setHourlySchedule(result.hourly || []);
-        setGateAssignment(result.gate || null);
-        setWeeklyDuty(result.weeklyDuty || null);
-        setAuditLog(result.audit || null);
-        setAbsences(result.absences || []);
+        console.log("Frontend fetching daily data for date:", dateStr);
+        console.log(
+          "Frontend fetching on-call for week starting:",
+          startOfWeekForOnCallFetch
+        );
+
+        const [dailyRes, onCallRes] = await Promise.all([
+          fetch(`/api/daily-data?date=${dateStr}`),
+          fetch(`/api/oncall-table?date=${startOfWeekForOnCallFetch}`),
+        ]);
+
+        if (!dailyRes.ok)
+          throw new Error(`Failed to fetch daily data: ${dailyRes.statusText}`);
+        if (!onCallRes.ok)
+          throw new Error(
+            `Failed to fetch on-call table data: ${onCallRes.statusText}`
+          );
+
+        const dailyResult = await dailyRes.json();
+        const onCallResult = await onCallRes.json();
+
+        console.log("Frontend received weeklyDuty:", dailyResult.weeklyDuty);
+        console.log("Frontend received onCallSchedule:", onCallResult.data);
+
+        setHourlySchedule(dailyResult.hourly || []);
+        setGateAssignment(dailyResult.gate || null);
+        setWeeklyDuty(dailyResult.weeklyDuty || null);
+        setAuditLog(dailyResult.audit || null);
+        setAbsences(dailyResult.absences || []);
+        setOnCallSchedule(onCallResult.data || []);
       } catch (error) {
         toast.error(error.message);
         setHourlySchedule([]);
@@ -761,6 +867,7 @@ export default function App() {
         setWeeklyDuty(null);
         setAuditLog(null);
         setAbsences([]);
+        setOnCallSchedule([]);
       } finally {
         setIsFetching(false);
         isFetchingRef.current = false;
@@ -876,13 +983,13 @@ export default function App() {
   };
 
   const handleShuffle = async (e, userName, password, reason) => {
-    e?.preventDefault(); // Use optional chaining to safely call preventDefault
+    e?.preventDefault();
 
     if (password !== "123456") return toast.error("كلمة المرور غير صحيحة.");
     if (!userName.trim()) return toast.error("الرجاء إدخال اسمك للتدقيق.");
     if (!reason.trim()) return toast.error("الرجاء إدخال سبب لإعادة التوزيع.");
 
-    setIsShuffleModalOpen(false); // Close the modal
+    setIsShuffleModalOpen(false);
     setIsSubmitting(true);
 
     try {
@@ -1000,9 +1107,8 @@ export default function App() {
   };
 
   const handleRosterModalClose = () => {
-    setIsRosterModalOpen(false); // Always close the Roster modal
+    setIsRosterModalOpen(false);
 
-    // Get the names of the absent people from the current `absences` state
     const absentNamesObjects = allNames.filter((name) =>
       absences.includes(name.id)
     );
@@ -1010,8 +1116,8 @@ export default function App() {
     if (absentNamesObjects.length > 0) {
       const namesList = absentNamesObjects.map((name) => name.name).join(", ");
       const reason = `${namesList} غير متوفرين`;
-      setPrefilledShuffleReason(reason); // Set the reason for the ShuffleModal
-      setIsShuffleModalOpen(true); // Open the ShuffleModal
+      setPrefilledShuffleReason(reason);
+      setIsShuffleModalOpen(true);
     }
   };
 
@@ -1107,6 +1213,23 @@ export default function App() {
                 <GateCard assignment={gateAssignment} />
               ) : (
                 <EmptyState text="لا يمكن تحديد دوام البوابة." />
+              )}
+            </Section>
+
+            {/* NEW SECTION FOR ON-CALL TABLE */}
+            <Section title="جدول المناوبات الإضافية" icon={ShieldAlert}>
+              {isFetching ? (
+                <Spinner />
+              ) : onCallSchedule.length > 0 &&
+                onCallSchedule.some((d) => d.name !== "غير محدد") ? (
+                <OnCallTable
+                  onCallData={onCallSchedule}
+                  weekStartDate={dayjs(selectedDate.startDate)
+                    .startOf("isoWeek")
+                    .format("YYYY-MM-DD")}
+                />
+              ) : (
+                <EmptyState text="لا يمكن تحديد جدول المناوبات الإضافية لهذا الأسبوع." />
               )}
             </Section>
 
