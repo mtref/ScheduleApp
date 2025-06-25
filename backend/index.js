@@ -102,7 +102,7 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
       initialNames.forEach((name) => insertNameStmt.run(name));
       insertNameStmt.finalize();
 
-      // Initialize oncall_rotation_state if no record exists
+      // **MODIFIED PART: Ensure oncall_rotation_state initializes with the first person**
       db.get(
         `SELECT COUNT(*) as count FROM oncall_rotation_state`,
         (err, row) => {
@@ -111,15 +111,17 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
             return;
           }
           if (row.count === 0) {
+            // Check for names first to ensure there's someone to assign
             db.get(
-              `SELECT id FROM names ORDER BY id ASC LIMIT 1`,
+              `SELECT id FROM names ORDER BY id ASC LIMIT 1`, // Get the first name by ID
               (err, nameRow) => {
                 if (err || !nameRow) {
                   console.warn(
-                    "No names found to initialize oncall_rotation_state."
+                    "No names found to initialize oncall_rotation_state. Ensure names are added."
                   );
                   return;
                 }
+                // Insert the first name's ID into oncall_rotation_state
                 db.run(
                   `INSERT INTO oncall_rotation_state (id, last_assigned_name_id) VALUES (1, ?)`,
                   [nameRow.id],
@@ -129,7 +131,10 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
                         "Error initializing oncall_rotation_state:",
                         err.message
                       );
-                    else console.log("oncall_rotation_state initialized.");
+                    else
+                      console.log(
+                        `oncall_rotation_state initialized with first person (ID: ${nameRow.id}).`
+                      );
                   }
                 );
               }
@@ -754,14 +759,17 @@ async function generateOnCallSchedule(triggerDate, allNames) {
     lastGlobalOnCallPersonId = rotationState.last_assigned_name_id;
   } else {
     // Initialize if no state exists
-    lastGlobalOnCallPersonId = allNames[0].id;
+    // This block is for initial setup. If there's no state, we want the *first* assignment
+    // to be "واحد" (ID:1). So, the "last assigned" person should be the one *before* "واحد"
+    // in the rotation cycle. This means the *last* person in the allNames array.
+    lastGlobalOnCallPersonId = allNames[allNames.length - 1].id; // Set to the last person's ID to start rotation with the first
     try {
       await dbRun(
         `INSERT INTO oncall_rotation_state (id, last_assigned_name_id) VALUES (1, ?)`,
         [lastGlobalOnCallPersonId]
       );
       console.log(
-        `Initialized oncall_rotation_state with: ${lastGlobalOnCallPersonId}`
+        `Initialized oncall_rotation_state with: ${lastGlobalOnCallPersonId} (to ensure first assignment is ${allNames[0].id})`
       );
     } catch (err) {
       console.error("Error initializing oncall_rotation_state:", err.message);
@@ -781,11 +789,11 @@ async function generateOnCallSchedule(triggerDate, allNames) {
   });
   console.log("Existing On-Call entries:", existingOnCallMap.size);
 
-  let currentRotationPersonId = lastGlobalOnCallPersonId; // This person will be assigned to the first slot of the first generated week's Sunday
+  let currentRotationPersonId = lastGlobalOnCallPersonId;
 
-  // If there are existing entries from *before* our generation start date,
-  // we need to find the *true* last assigned person from that historical data
-  // to correctly seed `currentRotationPersonId` for the first week we're generating.
+  // This check is important: If there are existing historical entries, they dictate the starting point.
+  // We need to ensure that *if* there are no historical entries, we genuinely start the rotation
+  // from the desired point.
   const mostRecentOnCallEntry = await dbGet(
     `SELECT week_start_date, day_of_week, name_id FROM oncall_schedule ORDER BY week_start_date DESC,
             CASE day_of_week
@@ -795,15 +803,18 @@ async function generateOnCallSchedule(triggerDate, allNames) {
   );
 
   if (mostRecentOnCallEntry) {
+    // If there's historical data, we continue from where it left off.
     currentRotationPersonId = mostRecentOnCallEntry.name_id;
     console.log(
       `Seeding currentRotationPersonId from most recent on-call entry: ${currentRotationPersonId}`
     );
   } else {
-    // If no on-call entries exist at all, start from the very first person.
-    currentRotationPersonId = allNames[0].id;
+    // This is the true "cold start" logic for the on-call schedule assignments.
+    // We want the *next* person to be the first in the list (واحد).
+    // So, `currentRotationPersonId` must be the *last* person in the list.
+    currentRotationPersonId = allNames[allNames.length - 1].id;
     console.log(
-      `No prior on-call entries, starting currentRotationPersonId from first name: ${currentRotationPersonId}`
+      `No prior on-call entries, starting currentRotationPersonId from last name (ID: ${currentRotationPersonId}) to ensure first assignment is first name.`
     );
   }
 
@@ -823,7 +834,6 @@ async function generateOnCallSchedule(triggerDate, allNames) {
         // If it exists, update the `currentRotationPersonId` to this person
         // to correctly continue the global sequence for the *next* slot.
         currentRotationPersonId = existingOnCallMap.get(uniqueKey).name_id;
-        // console.log(`  Skipping existing on-call for ${uniqueKey}, updating currentRotationPersonId to ${currentRotationPersonId}`);
         continue; // Skip insertion for this slot as it's already populated
       }
 
@@ -840,16 +850,13 @@ async function generateOnCallSchedule(triggerDate, allNames) {
           `INSERT OR IGNORE INTO oncall_schedule (week_start_date, day_of_week, name_id) VALUES (?, ?, ?)`,
           [currentWeekStartDate, dayKey, nextPersonId]
         );
-        // Only update currentRotationPersonId if the insert was actually performed
-        // (INSERT OR IGNORE won't throw if it already exists, so we assume it was inserted)
-        currentRotationPersonId = nextPersonId;
+        currentRotationPersonId = nextPersonId; // Update for the next iteration
         console.log(
           `  Assigned ${
             allNames.find((n) => n.id === nextPersonId).name
-          } to ${dayKey} for ${currentWeekStartDate}`
+          } (ID: ${nextPersonId}) to ${dayKey} for ${currentWeekStartDate}`
         );
       } catch (err) {
-        // This catch block handles actual errors like schema issues, not UNIQUE constraints for INSERT OR IGNORE
         console.error(
           `  Error inserting on-call for ${uniqueKey}:`,
           err.message
