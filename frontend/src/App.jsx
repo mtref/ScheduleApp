@@ -16,7 +16,6 @@ import {
   ShieldCheck,
   ShieldAlert,
   Award,
-  ChevronsRight,
   ListOrdered,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -24,33 +23,45 @@ import { toast, ToastContainer } from "react-toastify";
 import dayjs from "dayjs";
 import "dayjs/locale/ar";
 import weekday from "dayjs/plugin/weekday";
+import advancedFormat from "dayjs/plugin/advancedFormat"; // Keep this, it's harmless
 dayjs.extend(weekday);
+dayjs.extend(advancedFormat); // Keep this, it's harmless
 dayjs.locale("ar");
 
 const formatDateForApi = (date) => dayjs(date).format("YYYY-MM-DD");
 
+const arabicMonthNames = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "مايو",
+  "يونيو",
+  "يوليو",
+  "أغسطس",
+  "سبتمبر",
+  "أكتوبر",
+  "نوفمبر",
+  "ديسمبر",
+];
+
 // --- Reusable Components ---
 const Section = ({ title, icon: Icon, auditLog, children }) => (
   <div className="pt-4">
-    {" "}
     <div className="flex justify-between items-center mb-4">
-      {" "}
       <h2 className="text-2xl font-bold flex items-center gap-3">
-        {" "}
         <Icon className="h-7 w-7 text-gray-400" /> <span>{title}</span>
-      </h2>{" "}
+      </h2>
       {auditLog && (
         <div className="text-xs text-gray-500 flex items-center gap-2">
-          {" "}
-          <History size={14} />{" "}
+          <History size={14} />
           <span>
-            {" "}
             عُدل بواسطة: {auditLog.user_name} ({auditLog.reason})
-          </span>{" "}
+          </span>
         </div>
-      )}{" "}
-    </div>{" "}
-    {children}{" "}
+      )}
+    </div>
+    {children}
   </div>
 );
 
@@ -83,54 +94,46 @@ const HourlySlotCard = ({ slot, onEdit }) => (
         : ""
     }`}
   >
-    {" "}
     <div className="flex justify-between items-center mb-2">
-      {" "}
       <div className="flex items-center gap-2 font-bold text-lg">
-        {" "}
-        <Clock className="h-5 w-5 text-blue-400" />{" "}
-        <span>{`${slot.time}:00 - ${slot.time + 1}:00`}</span>{" "}
-      </div>{" "}
+        <Clock className="h-5 w-5 text-blue-400" />
+        <span>{`${slot.time}:00 - ${slot.time + 1}:00`}</span>
+      </div>
       {slot.assignment?.is_edited === 1 && (
         <div className="relative group">
-          {" "}
           <span className="text-xs bg-yellow-500 text-gray-900 font-bold px-2 py-0.5 rounded-full">
-            {" "}
-            مُعدل{" "}
-          </span>{" "}
+            مُعدل
+          </span>
           <div className="absolute text-right whitespace-nowrap bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 w-max p-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-            {" "}
             {slot.assignment.original_name && (
               <div>
-                <span className="font-bold">الأصلي:</span>{" "}
+                <span className="font-bold">الأصلي:</span>
                 {slot.assignment.original_name}
               </div>
-            )}{" "}
+            )}
             {slot.assignment.reason && (
               <div>
-                <span className="font-bold">السبب:</span>{" "}
+                <span className="font-bold">السبب:</span>
                 {slot.assignment.reason}
               </div>
-            )}{" "}
-          </div>{" "}
+            )}
+          </div>
         </div>
-      )}{" "}
-    </div>{" "}
+      )}
+    </div>
     <div
       className={`text-center rounded p-2 flex-grow flex items-center justify-center ${
         slot.isCurrent ? "bg-green-500/20" : "bg-gray-800/50"
       }`}
     >
-      {" "}
       {slot.isAssigned ? (
         <p className="font-tajawal text-xl font-bold text-white">
-          {" "}
-          {slot.assignment.name}{" "}
+          {slot.assignment.name}
         </p>
       ) : (
         <p className="text-gray-500">فارغ</p>
-      )}{" "}
-    </div>{" "}
+      )}
+    </div>
   </motion.div>
 );
 
@@ -140,7 +143,6 @@ const GateCard = ({ assignment }) => (
     animate={{ opacity: 1 }}
     className="bg-gray-700 rounded-lg p-6 text-center grid grid-cols-1 md:grid-cols-2 gap-4"
   >
-    {" "}
     <div>
       <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
         الرئيسي
@@ -148,7 +150,7 @@ const GateCard = ({ assignment }) => (
       <p className="text-4xl font-bold font-tajawal text-white">
         {assignment.main_name}
       </p>
-    </div>{" "}
+    </div>
     <div className="border-t md:border-t-0 md:border-r border-gray-600 pt-4 md:pt-0 md:pr-4">
       <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
         الاحتياط
@@ -156,56 +158,35 @@ const GateCard = ({ assignment }) => (
       <p className="text-2xl font-medium text-gray-300">
         {assignment.backup_name || "لا يوجد"}
       </p>
-    </div>{" "}
+    </div>
   </motion.div>
 );
 
-// Modified WeeklyDutyCard to display "Off Week" and be clickable for editing
-const WeeklyDutyCard = (
-  { duty, onPostpone, onEdit } // Added onEdit prop
-) => (
+const WeeklyDutyCard = ({ duty, onEdit }) => (
   <motion.div
-    layout // Added layout for smooth transitions if using Framer Motion layout animations
+    layout
     initial={{ opacity: 0 }}
     animate={{ opacity: 1 }}
-    className="bg-gray-700 rounded-lg p-6 text-center transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500" // Made clickable
-    onClick={() => onEdit(duty)} // Added onClick to trigger edit modal
+    className="bg-gray-700 rounded-lg p-6 text-center transition-all duration-300 cursor-pointer hover:ring-2 hover:ring-blue-500"
+    onClick={() => onEdit(duty)}
   >
-    {" "}
     <div className="flex justify-between items-start">
-      {" "}
       <div className="flex-grow text-center">
-        {" "}
         <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
-          {" "}
           المناوب لهذه الفترة (الأسبوع رقم {duty.week_number} - من الأحد إلى
-          السبت){" "}
-        </h3>{" "}
+          السبت)
+        </h3>
         {duty.is_off_week ? (
           <p className="text-4xl font-bold font-tajawal text-red-400 mt-2">
             أسبوع إجازة
           </p>
         ) : (
           <p className="text-4xl font-bold font-tajawal text-white mt-2">
-            {" "}
-            {duty.name}{" "}
+            {duty.name}
           </p>
-        )}{" "}
-      </div>{" "}
-      {/* Postpone button - consider if it should be available for off-weeks */}
-      {!duty.is_off_week && (
-        <button
-          onClick={(e) => {
-            // Stop propagation to prevent card's onClick from firing
-            e.stopPropagation();
-            onPostpone();
-          }}
-          className="text-gray-400 hover:text-purple-400 transition-colors p-2"
-        >
-          <ChevronsRight size={20} />
-        </button>
-      )}{" "}
-    </div>{" "}
+        )}
+      </div>
+    </div>
   </motion.div>
 );
 
@@ -229,7 +210,6 @@ const RosterAbsenceModal = ({
     className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
     onClick={onClose}
   >
-    {" "}
     <motion.div
       initial={{ y: -50, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
@@ -237,7 +217,6 @@ const RosterAbsenceModal = ({
       className="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg p-6 space-y-4"
       onClick={(e) => e.stopPropagation()}
     >
-      {" "}
       <div className="flex justify-between items-center">
         <h3 className="text-2xl font-bold">
           قائمة الأسماء والغياب ليوم{" "}
@@ -246,12 +225,11 @@ const RosterAbsenceModal = ({
         <button onClick={onClose} className="text-gray-400 hover:text-white">
           <X />
         </button>
-      </div>{" "}
+      </div>
       <form
         onSubmit={handleAddName}
         className="flex gap-2 p-2 bg-gray-900/50 rounded-md"
       >
-        {" "}
         <input
           type="text"
           value={newName}
@@ -259,7 +237,7 @@ const RosterAbsenceModal = ({
           placeholder="أضف اسماً جديداً للقائمة الرئيسية..."
           className="flex-grow bg-gray-700 text-white rounded-md px-3 py-2 focus:border-green-500 focus:outline-none focus:ring-0"
           autoFocus
-        />{" "}
+        />
         <button
           type="submit"
           disabled={isSubmitting}
@@ -267,10 +245,9 @@ const RosterAbsenceModal = ({
         >
           <UserPlus className="h-5 w-5" />
           <span>إضافة</span>
-        </button>{" "}
-      </form>{" "}
+        </button>
+      </form>
       <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
-        {" "}
         {allNames.map((name) => (
           <div
             key={name.id}
@@ -296,19 +273,26 @@ const RosterAbsenceModal = ({
               </button>
             </div>
           </div>
-        ))}{" "}
-      </div>{" "}
-    </motion.div>{" "}
+        ))}
+      </div>
+    </motion.div>
   </motion.div>
 );
 
-const ShuffleModal = ({ onClose, isSubmitting, handleShuffle }) => {
+const ShuffleModal = ({
+  onClose,
+  isSubmitting,
+  handleShuffle,
+  prefilledReason = "",
+}) => {
   const [userName, setUserName] = useState("");
   const [password, setPassword] = useState("");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(prefilledReason);
+
   const handleSubmit = (e) => {
     handleShuffle(e, userName, password, reason);
   };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -457,7 +441,6 @@ const EditSlotModal = ({
   </motion.div>
 );
 
-// NEW: Weekly Duty List Modal Component
 const WeeklyDutyListModal = ({
   onClose,
   onEditWeeklyDuty,
@@ -592,7 +575,6 @@ const WeeklyDutyListModal = ({
   );
 };
 
-// NEW: Edit Weekly Duty Modal Component
 const EditWeeklyDutyModal = ({
   onClose,
   isSubmitting,
@@ -607,7 +589,6 @@ const EditWeeklyDutyModal = ({
   const [reason, setReason] = useState(duty.reason || "");
 
   useEffect(() => {
-    // Sync state with duty prop changes
     setIsOffWeekChecked(duty.is_off_week === 1);
     setSelectedNameId(duty.name_id);
     setReason(duty.reason || "");
@@ -615,7 +596,6 @@ const EditWeeklyDutyModal = ({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Pass isOffWeekChecked to the parent handler
     handleOverrideWeeklyDuty(e, isOffWeekChecked, selectedNameId, reason);
   };
 
@@ -653,7 +633,7 @@ const EditWeeklyDutyModal = ({
                 id="isOffWeek"
                 checked={isOffWeekChecked}
                 onChange={(e) => setIsOffWeekChecked(e.target.checked)}
-                className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2" // Arabic: ml-2 for left margin
+                className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2"
               />
               <span>إجازة أسبوعية (أسبوع إيقاف)</span>
             </label>
@@ -670,10 +650,10 @@ const EditWeeklyDutyModal = ({
             <select
               id="newName"
               name="newName"
-              value={selectedNameId || ""} // Ensure controlled component
+              value={selectedNameId || ""}
               onChange={(e) => setSelectedNameId(parseInt(e.target.value))}
               className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-              disabled={isOffWeekChecked} // Disable if off-week
+              disabled={isOffWeekChecked}
             >
               <option value="" disabled>
                 اختر اسماً
@@ -696,7 +676,7 @@ const EditWeeklyDutyModal = ({
               id="reason"
               name="reason"
               type="text"
-              value={reason} // Controlled component
+              value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="سبب التعديل..."
               className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
@@ -707,7 +687,7 @@ const EditWeeklyDutyModal = ({
             type="submit"
             disabled={
               isSubmitting || (isOffWeekChecked === false && !selectedNameId)
-            } // Disable if not off-week and no name selected
+            }
             className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
           >
             {isSubmitting ? (
@@ -725,7 +705,6 @@ const EditWeeklyDutyModal = ({
 
 // --- Main App Component ---
 export default function App() {
-  // --- State Management ---
   const [selectedDate, setSelectedDate] = useState({
     startDate: new Date(),
     endDate: new Date(),
@@ -741,17 +720,15 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
   const [isShuffleModalOpen, setIsShuffleModalOpen] = useState(false);
+  const [prefilledShuffleReason, setPrefilledShuffleReason] = useState("");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  // State for the weekly duty list modal
   const [isWeeklyDutyListModalOpen, setIsWeeklyDutyListModalOpen] =
     useState(false);
-  // State for editing a weekly duty slot
   const [isEditWeeklyDutyModalOpen, setIsEditWeeklyDutyModalOpen] =
     useState(false);
   const [editingWeeklyDuty, setEditingWeeklyDuty] = useState(null);
-  // NEW: State to trigger refresh of the weekly duty list modal
   const [weeklyDutyListRefreshTrigger, setWeeklyDutyListRefreshTrigger] =
     useState(0);
 
@@ -759,7 +736,6 @@ export default function App() {
 
   const timeSlots = useMemo(() => [8, 9, 10, 11, 12, 13], []);
 
-  // --- Data Fetching Effects ---
   useEffect(() => {
     if (!selectedDate?.startDate || isFetchingRef.current) return;
 
@@ -771,7 +747,7 @@ export default function App() {
         const res = await fetch(`/api/daily-data?date=${dateStr}`);
         if (!res.ok) throw new Error("Failed to fetch daily data.");
         const result = await res.json();
-        console.log("Frontend received weeklyDuty:", result.weeklyDuty); // Debugging log
+        console.log("Frontend received weeklyDuty:", result.weeklyDuty);
 
         setHourlySchedule(result.hourly || []);
         setGateAssignment(result.gate || null);
@@ -793,7 +769,6 @@ export default function App() {
     fetchAllData();
   }, [selectedDate, isSubmitting]);
 
-  // Modified useEffect to fetch names only when needed
   useEffect(() => {
     const fetchMasterNames = async () => {
       try {
@@ -805,18 +780,26 @@ export default function App() {
         toast.error(error.message);
       }
     };
-    // Fetch names if any of these modals are open
-    if (isRosterModalOpen || isEditModalOpen || isEditWeeklyDutyModalOpen) {
+    if (
+      isRosterModalOpen ||
+      isEditModalOpen ||
+      isEditWeeklyDutyModalOpen ||
+      isShuffleModalOpen
+    ) {
       fetchMasterNames();
     }
-  }, [isRosterModalOpen, isEditModalOpen, isEditWeeklyDutyModalOpen]);
+  }, [
+    isRosterModalOpen,
+    isEditModalOpen,
+    isEditWeeklyDutyModalOpen,
+    isShuffleModalOpen,
+  ]);
 
   useEffect(() => {
     const timerId = setInterval(() => setCurrentTime(new Date()), 30000);
     return () => clearInterval(timerId);
   }, []);
 
-  // --- Memoized Derived State ---
   const isTodaySelected = useMemo(
     () => dayjs(selectedDate.startDate).isSame(new Date(), "day"),
     [selectedDate]
@@ -838,7 +821,6 @@ export default function App() {
     });
   }, [hourlySchedule, timeSlots, currentTime, isTodaySelected]);
 
-  // --- Event Handlers ---
   const handleAddName = async (e) => {
     e.preventDefault();
     if (!newName.trim()) return;
@@ -881,6 +863,11 @@ export default function App() {
           date: formatDateForApi(selectedDate.startDate),
         }),
       });
+      setAbsences((prevAbsences) =>
+        prevAbsences.includes(nameId)
+          ? prevAbsences.filter((id) => id !== nameId)
+          : [...prevAbsences, nameId]
+      );
     } catch (error) {
       toast.error("Failed to update absence status.");
     } finally {
@@ -889,12 +876,15 @@ export default function App() {
   };
 
   const handleShuffle = async (e, userName, password, reason) => {
-    e.preventDefault();
+    e?.preventDefault(); // Use optional chaining to safely call preventDefault
+
     if (password !== "123456") return toast.error("كلمة المرور غير صحيحة.");
     if (!userName.trim()) return toast.error("الرجاء إدخال اسمك للتدقيق.");
     if (!reason.trim()) return toast.error("الرجاء إدخال سبب لإعادة التوزيع.");
-    setIsShuffleModalOpen(false);
+
+    setIsShuffleModalOpen(false); // Close the modal
     setIsSubmitting(true);
+
     try {
       const dateStr = formatDateForApi(selectedDate.startDate);
       const currentHour = dayjs(currentTime).hour();
@@ -954,52 +944,22 @@ export default function App() {
     }
   };
 
-  const handlePostponeWeeklyDuty = async () => {
-    if (!weeklyDuty) return;
-
-    setIsSubmitting(true);
-    try {
-      const res = await fetch("/api/weekly-duty/postpone", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          week_start_date: dayjs(selectedDate.startDate)
-            .weekday(0)
-            .format("YYYY-MM-DD"),
-        }),
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Failed to postpone duty.");
-      }
-      toast.success("تم ترحيل المناوبة الأسبوعية بنجاح!");
-      setWeeklyDutyListRefreshTrigger((prev) => prev + 1); // Trigger refresh for weekly duty list
-    } catch (error) {
-      toast.error(error.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleDateChange = (newValue) => {
     if (newValue && newValue.startDate) setSelectedDate(newValue);
     else toast.warn("يجب تحديد تاريخ لعرض الجدول.");
   };
 
-  // Handler for opening the Edit Weekly Duty Modal
   const handleOpenEditWeeklyDutyModal = (duty) => {
     setEditingWeeklyDuty(duty);
     setIsEditWeeklyDutyModalOpen(true);
   };
 
-  // Handler for overriding a weekly duty slot
   const handleOverrideWeeklyDuty = async (
     e,
     isOffWeekChecked,
     selectedNameId,
     reason
   ) => {
-    // e.preventDefault(); is handled inside the modal component now
     if (
       !editingWeeklyDuty ||
       !reason.trim() ||
@@ -1011,7 +971,7 @@ export default function App() {
     }
 
     setIsSubmitting(true);
-    setIsEditWeeklyDutyModalOpen(false); // Close the modal
+    setIsEditWeeklyDutyModalOpen(false);
     try {
       const res = await fetch("/api/weekly-duty/override", {
         method: "POST",
@@ -1020,7 +980,7 @@ export default function App() {
           week_start_date: editingWeeklyDuty.week_start_date,
           name_id: selectedNameId,
           reason: reason.trim(),
-          is_off_week: isOffWeekChecked ? 1 : 0, // Pass the new field
+          is_off_week: isOffWeekChecked ? 1 : 0,
         }),
       });
 
@@ -1029,14 +989,29 @@ export default function App() {
         throw new Error(errData.error || "فشل تعديل المناوبة الأسبوعية.");
       }
       toast.success("تم تعديل المناوبة الأسبوعية بنجاح!");
-      // Re-fetch all data to update the main UI, and trigger refresh for weekly duty list
       setIsFetching(true);
-      setWeeklyDutyListRefreshTrigger((prev) => prev + 1); // Increment to trigger refresh in WeeklyDutyListModal
+      setWeeklyDutyListRefreshTrigger((prev) => prev + 1);
     } catch (error) {
       toast.error(error.message);
     } finally {
       setEditingWeeklyDuty(null);
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRosterModalClose = () => {
+    setIsRosterModalOpen(false); // Always close the Roster modal
+
+    // Get the names of the absent people from the current `absences` state
+    const absentNamesObjects = allNames.filter((name) =>
+      absences.includes(name.id)
+    );
+
+    if (absentNamesObjects.length > 0) {
+      const namesList = absentNamesObjects.map((name) => name.name).join(", ");
+      const reason = `${namesList} غير متوفرين`;
+      setPrefilledShuffleReason(reason); // Set the reason for the ShuffleModal
+      setIsShuffleModalOpen(true); // Open the ShuffleModal
     }
   };
 
@@ -1049,29 +1024,28 @@ export default function App() {
               initial={{ scale: 0.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
             >
-              {" "}
-              <Calendar className="mx-auto h-16 w-16 text-blue-400" />{" "}
+              <Calendar className="mx-auto h-16 w-16 text-blue-400" />
             </motion.div>
             <h1 className="text-3xl md:text-4xl font-bold font-tajawal">
-              {" "}
-              جدول الدوام اليومي{" "}
+              جدول الدوام اليومي
             </h1>
             <h2 className="text-2xl font-bold text-gray-300">
-              {dayjs(selectedDate.startDate).format(
-                "dddd, DD MMMM tetrachloride"
-              )}
+              {`${dayjs(selectedDate.startDate).format("dddd")}, ${dayjs(
+                selectedDate.startDate
+              ).date()} ${
+                arabicMonthNames[dayjs(selectedDate.startDate).month()]
+              } ${dayjs(selectedDate.startDate).year()}`}
             </h2>
           </div>
           <div className="flex flex-col md:flex-row gap-4 items-center">
             <div className="w-full md:w-72">
-              {" "}
               <Datepicker
                 value={selectedDate}
                 onChange={handleDateChange}
                 asSingle={true}
                 useRange={false}
                 inputClassName="w-full bg-gray-700 text-white placeholder-gray-400 rounded-md py-3 pr-4 pl-12 border-2 border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-0"
-              />{" "}
+              />
             </div>
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -1079,9 +1053,8 @@ export default function App() {
               onClick={() => setIsRosterModalOpen(true)}
               className="w-full md:w-auto flex-grow flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
-              {" "}
-              <ListPlus className="h-5 w-5" />{" "}
-              <span>قائمة الأسماء والغياب</span>{" "}
+              <ListPlus className="h-5 w-5" />
+              <span>قائمة الأسماء والغياب</span>
             </motion.button>
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -1090,18 +1063,16 @@ export default function App() {
               disabled={!isTodaySelected}
               className="w-full md:w-auto flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
-              {" "}
-              <Shuffle className="h-5 w-5" /> <span>إعادة توزيع الساعات</span>{" "}
+              <Shuffle className="h-5 w-5" /> <span>إعادة توزيع الساعات</span>
             </motion.button>
-            {/* Button to open Weekly Duty List Modal */}
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setIsWeeklyDutyListModalOpen(true)}
               className="w-full md:w-auto flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
-              <ListOrdered className="h-5 w-5" />{" "}
-              <span>عرض المناوبات القادمة</span>{" "}
+              <ListOrdered className="h-5 w-5" />
+              <span>عرض المناوبات القادمة</span>
             </motion.button>
           </div>
 
@@ -1145,8 +1116,7 @@ export default function App() {
               ) : weeklyDuty ? (
                 <WeeklyDutyCard
                   duty={weeklyDuty}
-                  onPostpone={handlePostponeWeeklyDuty}
-                  onEdit={handleOpenEditWeeklyDutyModal} // Pass the edit handler here
+                  onEdit={handleOpenEditWeeklyDutyModal}
                 />
               ) : (
                 <EmptyState text="لا يمكن تحديد المناوب الأسبوعي." />
@@ -1158,7 +1128,7 @@ export default function App() {
       <AnimatePresence>
         {isRosterModalOpen && (
           <RosterAbsenceModal
-            onClose={() => setIsRosterModalOpen(false)}
+            onClose={handleRosterModalClose}
             allNames={allNames}
             absences={absences}
             isSubmitting={isSubmitting}
@@ -1172,9 +1142,13 @@ export default function App() {
         )}
         {isShuffleModalOpen && (
           <ShuffleModal
-            onClose={() => setIsShuffleModalOpen(false)}
+            onClose={() => {
+              setIsShuffleModalOpen(false);
+              setPrefilledShuffleReason("");
+            }}
             isSubmitting={isSubmitting}
             handleShuffle={handleShuffle}
+            prefilledReason={prefilledShuffleReason}
           />
         )}
         {isEditModalOpen && (
@@ -1192,7 +1166,7 @@ export default function App() {
             onClose={() => setIsWeeklyDutyListModalOpen(false)}
             onEditWeeklyDuty={handleOpenEditWeeklyDutyModal}
             allNames={allNames}
-            refreshTrigger={weeklyDutyListRefreshTrigger} // Pass refresh trigger
+            refreshTrigger={weeklyDutyListRefreshTrigger}
           />
         )}
         {/* Edit Weekly Duty Modal */}

@@ -65,22 +65,22 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
         `CREATE TABLE IF NOT EXISTS weekly_duty (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           week_start_date TEXT NOT NULL UNIQUE,
-          name_id INTEGER, -- Make name_id nullable
+          name_id INTEGER,
           is_edited INTEGER DEFAULT 0,
           original_name_id INTEGER,
           reason TEXT,
           week_number INTEGER,
-          is_off_week INTEGER DEFAULT 0, -- NEW COLUMN
+          is_off_week INTEGER DEFAULT 0,
           FOREIGN KEY (name_id) REFERENCES names(id) ON DELETE SET NULL,
           FOREIGN KEY (original_name_id) REFERENCES names(id) ON DELETE SET NULL
         )`
       );
 
-      //const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
+      const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
       const insertNameStmt = db.prepare(
         "INSERT OR IGNORE INTO names (name) VALUES (?)"
       );
-      //initialNames.forEach((name) => insertNameStmt.run(name));
+      initialNames.forEach((name) => insertNameStmt.run(name));
       insertNameStmt.finalize();
     });
 
@@ -175,7 +175,6 @@ app.get("/api/daily-data", async (req, res) => {
     const gateQuery = `SELECT main.id as main_id, main.name as main_name, backup.id as backup_id, backup.name as backup_name FROM gate_assignments ga JOIN names main ON ga.main_name_id = main.id LEFT JOIN names backup ON ga.backup_name_id = backup.id WHERE ga.assignment_date = ?`;
     const auditQuery = `SELECT user_name, reason, timestamp FROM audit_log WHERE action_date = ? AND action_type = 'shuffle' ORDER BY timestamp DESC LIMIT 1`;
     const absencesQuery = `SELECT name_id FROM absences WHERE absence_date = ?`;
-    // CHANGED: Use startOf("isoWeek") for consistency
     const startOfWeek = dayjs(date).startOf("isoWeek").format("YYYY-MM-DD");
     const weeklyQuery = `SELECT wd.week_start_date, wd.is_edited, wd.reason, n.name, wd.name_id, o.name as original_name, wd.week_number, wd.is_off_week FROM weekly_duty wd LEFT JOIN names n ON wd.name_id = n.id LEFT JOIN names o ON wd.original_name_id = o.id WHERE wd.week_start_date = ?`;
 
@@ -188,7 +187,7 @@ app.get("/api/daily-data", async (req, res) => {
         dbAll(absencesQuery, [date]),
       ]);
 
-    console.log("Fetched weeklyRow for current date:", weeklyRow); // Debugging log
+    console.log("Fetched weeklyRow for current date:", weeklyRow);
 
     res.json({
       date,
@@ -256,6 +255,8 @@ app.post("/api/schedule/override", async (req, res) => {
   }
 });
 
+// Removed /api/weekly-duty/postpone endpoint and its logic
+/*
 app.post("/api/weekly-duty/postpone", async (req, res) => {
   const { week_start_date } = req.body;
   if (!week_start_date)
@@ -281,7 +282,6 @@ app.post("/api/weekly-duty/postpone", async (req, res) => {
     for (let i = 0; i < duties.length - 1; i++) {
       const currentWeek = duties[i];
       const nextWeek = duties[i + 1];
-      // Ensure we preserve is_edited and is_off_week flags if they were set
       await dbRun(
         "UPDATE weekly_duty SET name_id = ?, is_edited = ?, original_name_id = ?, reason = ?, is_off_week = ? WHERE week_start_date = ?",
         [
@@ -304,7 +304,6 @@ app.post("/api/weekly-duty/postpone", async (req, res) => {
 
     await dbRun("COMMIT");
 
-    // After postponement, regenerate to ensure the new state propagates correctly
     await regenerateWeeklyDuty(week_start_date, allNames);
 
     res.status(200).json({ message: "Weekly duty postponed successfully." });
@@ -315,13 +314,12 @@ app.post("/api/weekly-duty/postpone", async (req, res) => {
       .json({ error: "Failed to postpone weekly duty.", details: err.message });
   }
 });
+*/
 
-// Add new API endpoint for fetching multiple weekly duties
 app.get("/api/weekly-duties/upcoming", async (req, res) => {
-  const { count = 12 } = req.query; // Default to 12 weeks
+  const { count = 12 } = req.query;
   try {
     const today = dayjs().format("YYYY-MM-DD");
-    // Updated weekly duties query to include is_off_week
     const rows = await dbAll(
       `SELECT wd.week_start_date, wd.week_number, n.name, wd.is_edited, wd.reason, o.name as original_name, wd.is_off_week
        FROM weekly_duty wd
@@ -341,10 +339,8 @@ app.get("/api/weekly-duties/upcoming", async (req, res) => {
   }
 });
 
-// New API endpoint for overriding a weekly duty slot
 app.post("/api/weekly-duty/override", async (req, res) => {
   const { week_start_date, name_id, reason, is_off_week } = req.body;
-  // Validate inputs
   if (!week_start_date || (!name_id && is_off_week === 0) || !reason) {
     return res.status(400).json({
       error:
@@ -352,9 +348,7 @@ app.post("/api/weekly-duty/override", async (req, res) => {
     });
   }
 
-  // Convert is_off_week to integer (0 or 1)
   const isOffWeekInt = is_off_week ? 1 : 0;
-  // Set name_id to null if it's an off-week
   const actualNameId = isOffWeekInt === 1 ? null : name_id;
 
   try {
@@ -366,20 +360,11 @@ app.post("/api/weekly-duty/override", async (req, res) => {
     );
 
     if (row) {
-      // If a record exists, update it
       await dbRun(
         `UPDATE weekly_duty SET name_id = ?, reason = ?, original_name_id = CASE WHEN is_edited = 0 THEN ? ELSE original_name_id END, is_edited = 1, is_off_week = ? WHERE id = ?;`,
-        [
-          actualNameId,
-          reason,
-          row.name_id, // Original name is the name *before* this edit if it wasn't already edited
-          isOffWeekInt,
-          row.id,
-        ]
+        [actualNameId, reason, row.name_id, isOffWeekInt, row.id]
       );
     } else {
-      // If no record exists for the date, insert a new one (marked as edited)
-      // Original_name_id would be null here as it's a new entry
       await dbRun(
         `INSERT INTO weekly_duty (week_start_date, name_id, is_edited, reason, is_off_week, week_number) VALUES (?, ?, 1, ?, ?, ?);`,
         [
@@ -392,15 +377,14 @@ app.post("/api/weekly-duty/override", async (req, res) => {
       );
     }
 
-    // After an override, we need to regenerate/shift the duties starting from the affected week.
-    // We will clear out all *non-edited* duties from this week onwards, then let regenerateWeeklyDuty re-populate them.
+    // Delete all *non-edited* duties from this week onwards to allow re-shifting
     await dbRun(
       `DELETE FROM weekly_duty WHERE week_start_date >= ? AND is_edited = 0;`,
       [week_start_date]
     );
 
     await regenerateWeeklyDuty(
-      week_start_date, // Trigger regeneration from this week
+      week_start_date,
       await dbAll(`SELECT * FROM names ORDER BY id`)
     );
 
@@ -530,22 +514,17 @@ async function regenerateHourlySchedule(
 async function regenerateWeeklyDuty(triggerDate, allNames) {
   if (allNames.length === 0) return;
 
-  const WEEKS_TO_GENERATE = 52; // Generate for a full year to ensure rotation stability
+  const WEEKS_TO_GENERATE = 52;
   const startOfWeekForTrigger = dayjs(triggerDate).startOf("isoWeek");
 
   console.log(`--- Regenerate Weekly Duty for triggerDate: ${triggerDate} ---`);
 
-  // Fetch all existing weekly duties to preserve manually edited ones
-  // We need to fetch ALL existing duties, as `regenerateWeeklyDuty` will now
-  // be responsible for setting the future based on past *actual* assignments
-  // and skipping over *edited* weeks (including off-weeks).
   const allExistingDuties = await dbAll(
     `SELECT * FROM weekly_duty ORDER BY week_start_date ASC`
   );
   const editedDutiesMap = new Map();
   allExistingDuties.forEach((duty) => {
     if (duty.is_edited === 1) {
-      // Only manually edited weeks are "fixed" and not overwritten
       editedDutiesMap.set(duty.week_start_date, duty);
     }
   });
@@ -553,8 +532,6 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
 
   let lastAssignedPersonId = null;
 
-  // Find the last actually assigned person from *all existing duties before the trigger date*
-  // This is crucial for correctly starting the rotation after an edit/off-week
   const mostRecentActualDutyBeforeTrigger = await dbGet(
     `SELECT name_id FROM weekly_duty WHERE is_off_week = 0 AND name_id IS NOT NULL AND week_start_date < ? ORDER BY week_start_date DESC LIMIT 1`,
     [startOfWeekForTrigger.format("YYYY-MM-DD")]
@@ -563,7 +540,6 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
   if (mostRecentActualDutyBeforeTrigger) {
     lastAssignedPersonId = mostRecentActualDutyBeforeTrigger.name_id;
   } else {
-    // If no duty found before trigger date, or no actual assignments, start with first person
     if (allNames.length > 0) {
       lastAssignedPersonId = allNames[0].id;
     }
@@ -583,8 +559,6 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
 
     const existingEditedRecord = editedDutiesMap.get(weekStartDate);
 
-    // If it's a manually edited week (including a manually set off-week), preserve it.
-    // The rotation `lastAssignedPersonId` must account for this week's person if it's not an off-week.
     if (existingEditedRecord) {
       console.log(
         `  Existing MANUALLY EDITED record found for ${weekStartDate}:`,
@@ -594,7 +568,7 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
         existingEditedRecord.is_off_week === 0 &&
         existingEditedRecord.name_id !== null
       ) {
-        lastAssignedPersonId = existingEditedRecord.name_id; // This person took their turn.
+        lastAssignedPersonId = existingEditedRecord.name_id;
         console.log(
           `  Updated lastAssignedPersonId based on preserved edited week: ${lastAssignedPersonId}`
         );
@@ -602,13 +576,10 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
         console.log(
           `  Skipping over manually set off-week: ${weekStartDate}. Rotation will effectively skip this "turn."`
         );
-        // lastAssignedPersonId does NOT change for an off-week, as no one was assigned.
-        // The next person in the sequence will take the *next* available non-off-week.
       }
-      continue; // Move to the next week, as this one is already handled by manual edit.
+      continue;
     }
 
-    // If we reach here, it's either a new week to be generated or an existing *auto-generated* one that needs updating.
     let newDutyPersonId = null;
     if (lastAssignedPersonId !== null) {
       const lastIndex = allNames.findIndex(
@@ -620,26 +591,22 @@ async function regenerateWeeklyDuty(triggerDate, allNames) {
         `  Calculating newDutyPersonId: lastIndex=${lastIndex}, nextIndex=${nextIndex}, newId=${newDutyPersonId}`
       );
     } else if (allNames.length > 0) {
-      newDutyPersonId = allNames[0].id; // Fallback to first person if no prior assignment
+      newDutyPersonId = allNames[0].id;
       console.log(`  Starting with first person: ${newDutyPersonId}`);
     }
 
     if (newDutyPersonId) {
-      // Here, we use INSERT OR REPLACE. Why?
-      // Because if a week was previously auto-generated (is_edited=0), and we just created an off-week
-      // earlier in the timeline, all subsequent auto-generated weeks need to shift.
-      // INSERT OR REPLACE allows us to overwrite old auto-generated entries with new shifted ones.
-      // Manually edited entries are skipped by the `existingEditedRecord` check above.
+      // Use INSERT OR REPLACE to update existing auto-generated entries or insert new ones.
       console.log(
         `  INSERT OR REPLACE for ${weekStartDate}: name_id=${newDutyPersonId}, week_number=${weekNumber}`
       );
       try {
         await dbRun(
           `INSERT OR REPLACE INTO weekly_duty (week_start_date, name_id, week_number, is_edited, is_off_week, original_name_id, reason)
-                 VALUES (?, ?, ?, 0, 0, NULL, NULL)`, // These are always auto-generated (is_edited=0, is_off_week=0)
+                 VALUES (?, ?, ?, 0, 0, NULL, NULL)`,
           [weekStartDate, newDutyPersonId, weekNumber]
         );
-        lastAssignedPersonId = newDutyPersonId; // Update last assigned person for the next iteration
+        lastAssignedPersonId = newDutyPersonId;
         console.log(
           `  Successfully inserted/replaced. New lastAssignedPersonId: ${lastAssignedPersonId}`
         );
