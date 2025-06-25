@@ -25,8 +25,10 @@ import dayjs from "dayjs";
 import "dayjs/locale/ar";
 import weekday from "dayjs/plugin/weekday";
 import advancedFormat from "dayjs/plugin/advancedFormat";
+import isoWeek from "dayjs/plugin/isoWeek";
 dayjs.extend(weekday);
 dayjs.extend(advancedFormat);
+dayjs.extend(isoWeek);
 dayjs.locale("ar");
 
 import html2canvas from "html2canvas"; // Import html2canvas
@@ -179,13 +181,12 @@ const WeeklyDutyCard = ({ duty, onEdit }) => (
   >
     <div className="flex justify-between items-start">
       <div className="flex-grow text-center">
-        <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">
-          المناوب لهذه الفترة (الأسبوع رقم {duty.week_number} - من الأحد إلى
-          السبت)
-        </h3>
+        <h2 className="text-xl font-bold mb-4 text-center text-blue-400">
+          (الأسبوع رقم {duty.week_number})
+        </h2>
         {duty.is_off_week ? (
           <p className="text-4xl font-bold font-tajawal text-red-400 mt-2">
-            أسبوع إجازة
+            جدول مخصص
           </p>
         ) : (
           <p className="text-4xl font-bold font-tajawal text-white mt-2">
@@ -208,9 +209,15 @@ const OnCallTable = ({ onCallData, weekStartDate }) => {
     sat: "السبت",
   };
 
+  console.log("OnCallTable: Received weekStartDate prop:", weekStartDate);
+  console.log(
+    "OnCallTable: Formatted date for display:",
+    dayjs(weekStartDate).format("DD/MM/YYYY")
+  );
+
   if (!onCallData || onCallData.length === 0) {
     return (
-      <EmptyState text="لا يمكن تحديد جدول المناوبات الإضافية لهذا الأسبوع." />
+      <EmptyState text="لا يمكن تحديد جدول المناوبات بالاتصال لهذا الأسبوع." />
     );
   }
 
@@ -222,7 +229,7 @@ const OnCallTable = ({ onCallData, weekStartDate }) => {
   return (
     <div className="bg-gray-700 rounded-lg p-4 shadow-lg text-white">
       <h3 className="text-xl font-bold mb-4 text-center">
-        جدول المناوبات الإضافية - الأسبوع يبدأ{" "}
+        جدول المناوبات بالاتصال - الأسبوع يبدأ{" "}
         {dayjs(weekStartDate).format("DD/MM/YYYY")}
       </h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -404,7 +411,7 @@ const ShuffleModal = ({
             type="text"
             value={userName}
             onChange={(e) => setUserName(e.target.value)}
-            placeholder="اسمك للتدقيق..."
+            placeholder="ادخل اسمك هنا"
             className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-purple-500 focus:outline-none focus:ring-0"
             required
             autoFocus
@@ -413,7 +420,7 @@ const ShuffleModal = ({
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="كلمة المرور..."
+            placeholder="كلمة المرور"
             className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-purple-500 focus:outline-none focus:ring-0"
             required
           />
@@ -421,7 +428,7 @@ const ShuffleModal = ({
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="سبب إعادة التوزيع..."
+            placeholder="اذكر سبب إعادة التوزيع"
             className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-purple-500 focus:outline-none focus:ring-0"
             required
           />
@@ -476,7 +483,7 @@ const EditSlotModal = ({
             htmlFor="newName"
             className="block text-sm font-medium text-gray-300 mb-1"
           >
-            اختر اسماً جديداً
+            اختر اسم البديل
           </label>
           <select
             id="newName"
@@ -503,7 +510,7 @@ const EditSlotModal = ({
             name="reason"
             type="text"
             defaultValue={slot.assignment?.reason || ""}
-            placeholder="سبب التعديل..."
+            placeholder="سبب التبديل"
             className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
             required
           />
@@ -621,7 +628,7 @@ const WeeklyDutyListModal = ({
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {duty.is_off_week ? (
                         <span className="font-bold text-red-400">
-                          أسبوع إجازة
+                          جدول مخصص
                         </span>
                       ) : (
                         <span className="text-white">{duty.name}</span>
@@ -665,108 +672,129 @@ const EditWeeklyDutyModal = ({
   handleOverrideWeeklyDuty,
   duty,
   allNames,
-}) => (
-  <motion.div
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
-    onClick={onClose}
-  >
+}) => {
+  // Add state for the form inputs within the modal
+  const [isOffWeekChecked, setIsOffWeekChecked] = useState(
+    duty.is_off_week === 1
+  );
+  const [selectedNameId, setSelectedNameId] = useState(duty.name_id || null);
+  const [reason, setReason] = useState(duty.reason || "");
+
+  // Define handleSubmit locally within this component
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Call the prop function, passing the necessary state values
+    handleOverrideWeeklyDuty(e, isOffWeekChecked, selectedNameId, reason);
+  };
+
+  return (
     <motion.div
-      initial={{ y: -50, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: -50, opacity: 0 }}
-      className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
-      onClick={(e) => e.stopPropagation()}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
     >
-      <div className="flex justify-between items-center">
-        <h3 className="text-2xl font-bold">
-          تعديل مناوبة الأسبوع رقم {duty.week_number}
-        </h3>
-        <button onClick={onClose} className="text-gray-400 hover:text-white">
-          <X />
-        </button>
-      </div>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label
-            htmlFor="isOffWeek"
-            className="flex items-center text-sm font-medium text-gray-300 mb-2 cursor-pointer"
-          >
-            <input
-              type="checkbox"
-              id="isOffWeek"
-              checked={isOffWeekChecked}
-              onChange={(e) => setIsOffWeekChecked(e.target.checked)}
-              className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2"
-            />
-            <span>إجازة أسبوعية (أسبوع إيقاف)</span>
-          </label>
+      <motion.div
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: -50, opacity: 0 }}
+        className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm p-6 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center">
+          <h3 className="text-2xl font-bold">
+            تعديل مناوبة الأسبوع رقم {duty.week_number}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X />
+          </button>
         </div>
-        <div
-          className={isOffWeekChecked ? "opacity-50 pointer-events-none" : ""}
-        >
-          <label
-            htmlFor="newName"
-            className="block text-sm font-medium text-gray-300 mb-1"
+        {/* Now handleSubmit is defined here and linked to the form */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label
+              htmlFor="isOffWeek"
+              className="flex items-center text-sm font-medium text-gray-300 mb-2 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                id="isOffWeek"
+                checked={isOffWeekChecked}
+                onChange={(e) => {
+                  setIsOffWeekChecked(e.target.checked);
+                  // If switching to off-week, clear selected name
+                  if (e.target.checked) setSelectedNameId(null);
+                }}
+                className="w-5 h-5 rounded bg-gray-600 border-gray-500 text-red-500 focus:ring-red-600 ml-2"
+              />
+              <span>جدول استثنائي (إيقاف الجدول لهذا الأسبوع)</span>
+            </label>
+          </div>
+          <div
+            className={isOffWeekChecked ? "opacity-50 pointer-events-none" : ""}
           >
-            اختر اسماً جديداً
-          </label>
-          <select
-            id="newName"
-            name="newName"
-            value={selectedNameId || ""}
-            onChange={(e) => setSelectedNameId(parseInt(e.target.value))}
-            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-            disabled={isOffWeekChecked}
-          >
-            <option value="" disabled>
-              اختر اسماً
-            </option>
-            {allNames.map((name) => (
-              <option key={name.id} value={name.id}>
-                {name.name}
+            <label
+              htmlFor="newName"
+              className="block text-sm font-medium text-gray-300 mb-1"
+            >
+              اختر اسم البديل
+            </label>
+            <select
+              id="newName"
+              name="newName"
+              value={selectedNameId || ""} // Ensure controlled component
+              onChange={(e) => setSelectedNameId(parseInt(e.target.value))}
+              className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+              disabled={isOffWeekChecked}
+            >
+              <option value="" disabled>
+                اختار الاسم
               </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label
-            htmlFor="reason"
-            className="block text-sm font-medium text-gray-300 mb-1"
+              {allNames.map((name) => (
+                <option key={name.id} value={name.id}>
+                  {name.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label
+              htmlFor="reason"
+              className="block text-sm font-medium text-gray-300 mb-1"
+            >
+              السبب
+            </label>
+            <input
+              id="reason"
+              name="reason"
+              type="text"
+              value={reason} // Ensure controlled component
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="سبب التبديل"
+              className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={
+              isSubmitting || (isOffWeekChecked === false && !selectedNameId)
+            }
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
           >
-            السبب
-          </label>
-          <input
-            id="reason"
-            name="reason"
-            type="text"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="سبب التعديل..."
-            className="w-full bg-gray-700 text-white rounded-md px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-0"
-            required
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={
-            isSubmitting || (isOffWeekChecked === false && !selectedNameId)
-          }
-          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded-md"
-        >
-          {isSubmitting ? (
-            <Loader className="animate-spin h-5 w-5" />
-          ) : (
-            <Edit className="h-5 w-5" />
-          )}
-          <span>حفظ التعديل</span>
-        </button>
-      </form>
+            {isSubmitting ? (
+              <Loader className="animate-spin h-5 w-5" />
+            ) : (
+              <Edit className="h-5 w-5" />
+            )}
+            <span>حفظ التعديل</span>
+          </button>
+        </form>
+      </motion.div>
     </motion.div>
-  </motion.div>
-);
+  );
+};
 
 // --- Main App Component ---
 export default function App() {
@@ -814,13 +842,22 @@ export default function App() {
       try {
         const dateObj = selectedDate.startDate;
         const dateStr = formatDateForApi(dateObj);
+
+        dayjs.extend(isoWeek); // Add this line here too, just to be absolutely sure
+        dayjs.locale("ar");
+
+        // Add these console logs for debugging
+        console.log(
+          "Debug: selectedDate.startDate before ISO week calculation:",
+          dateObj
+        );
         const startOfWeekForOnCallFetch = dayjs(dateObj)
           .startOf("isoWeek")
           .format("YYYY-MM-DD");
 
         console.log("Frontend fetching daily data for date:", dateStr);
         console.log(
-          "Frontend fetching on-call for week starting:",
+          "Debug: Calculated startOfWeekForOnCallFetch:",
           startOfWeekForOnCallFetch
         );
 
@@ -1061,7 +1098,7 @@ export default function App() {
       (isOffWeekChecked === false && !selectedNameId)
     ) {
       return toast.error(
-        "الرجاء اختيار اسم أو تحديد أسبوع إجازة وذكر سبب التعديل."
+        "الرجاء اختيار اسم أو تحديد جدول مخصص وذكر سبب التعديل."
       );
     }
 
@@ -1212,7 +1249,7 @@ export default function App() {
               className="w-full md:w-auto flex-grow flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
               <ListPlus className="h-5 w-5" />
-              <span>قائمة الأسماء والغياب</span>
+              <span>الأسماء والغياب</span>
             </motion.button>
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -1230,7 +1267,7 @@ export default function App() {
               className="w-full md:w-auto flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
               <ListOrdered className="h-5 w-5" />
-              <span>عرض المناوبات القادمة</span>
+              <span>المناوبات الأسبوعية</span>
             </motion.button>
             {/* NEW: Export as Image Button */}
             <motion.button
@@ -1241,16 +1278,12 @@ export default function App() {
               className="w-full md:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-md transition-colors"
             >
               <Download className="h-5 w-5" />
-              <span>تصدير كصورة</span>
+              <span>تصدير الجدول</span>
             </motion.button>
           </div>
 
           <div className="space-y-8">
-            <Section
-              title="الجدول الزمني للساعات"
-              icon={Users}
-              auditLog={auditLog}
-            >
+            <Section title="الداتاسنتر" icon={Users} auditLog={auditLog}>
               {isFetching ? (
                 <Spinner />
               ) : (
@@ -1269,7 +1302,7 @@ export default function App() {
               )}
             </Section>
 
-            <Section title="دوام البوابة" icon={ShieldCheck}>
+            <Section title="إحضار من البوابة" icon={ShieldCheck}>
               {isFetching ? (
                 <Spinner />
               ) : gateAssignment ? (
@@ -1282,7 +1315,7 @@ export default function App() {
             {/* NEW SECTION FOR ON-CALL TABLE - WITH ID */}
             <Section
               id="on-call-section"
-              title="جدول المناوبات الإضافية"
+              title="جدول المناوبات بالاتصال"
               icon={ShieldAlert}
             >
               {isFetching ? (
@@ -1296,7 +1329,7 @@ export default function App() {
                     .format("YYYY-MM-DD")}
                 />
               ) : (
-                <EmptyState text="لا يمكن تحديد جدول المناوبات الإضافية لهذا الأسبوع." />
+                <EmptyState text="لا يمكن تحديد جدول المناوبات بالاتصال لهذا الأسبوع." />
               )}
             </Section>
 
