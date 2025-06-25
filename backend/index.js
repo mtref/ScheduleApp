@@ -95,7 +95,7 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
           )`
       );
 
-      const initialNames = ["واحد", "اثنين", "ثلاثة", "اربعه", "خمسة", "سته"];
+      const initialNames = ["المؤيد", "محسن", "عمر", "الحارث", "هلال", "جابر"];
       const insertNameStmt = db.prepare(
         "INSERT OR IGNORE INTO names (name) VALUES (?)"
       );

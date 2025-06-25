@@ -230,7 +230,7 @@ const OnCallTable = ({ onCallData, weekStartDate }) => {
     <div className="bg-gray-700 rounded-lg p-4 shadow-lg text-white">
       <h3 className="text-xl font-bold mb-4 text-center">
         جدول المناوبات بالاتصال - الأسبوع يبدأ{" "}
-        {dayjs(weekStartDate).format("DD/MM/YYYY")}
+        {dayjs(weekStartDate).subtract(1, "day").format("DD/MM/YYYY")}
       </h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Working Days Section (Sun-Thu) */}
@@ -623,7 +623,9 @@ const WeeklyDutyListModal = ({
                       {duty.week_number}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                      {dayjs(duty.week_start_date).format("DD/MM/YYYY")}
+                      {dayjs(duty.week_start_date)
+                        .subtract(1, "day")
+                        .format("DD/MM/YYYY")}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {duty.is_off_week ? (
