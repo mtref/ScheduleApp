@@ -1,8 +1,12 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # This argument defines the URL of your *first* app (finance app)
+        VITE_MAIN_APP_URL: "http://localhost:3000"
     ports:
-      - "3000:3000"
+      - "3001:3000" # Maps host port 3001 to container's internal port 3000
     volumes:
       - data:/app/data # Ensures DB folder persists
 

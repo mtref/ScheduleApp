@@ -1214,7 +1214,22 @@ export default function App() {
   return (
     <>
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-4 font-elmessiri">
-        {/* We don't need a ref on this div if we're targeting specific sections by ID */}
+        {/* NEW: Button to link back to the main app */}
+        <div className="w-full max-w-4xl flex justify-start mb-4">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              // This links back to the main app on port 3000
+              // Use import.meta.env for Vite environment variables
+              window.location.href =
+                import.meta.env.VITE_MAIN_APP_URL || "http://localhost:3000";
+            }}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md transition-colors"
+          >
+            إدارة العزبة
+          </motion.button>
+        </div>
         <div className="w-full max-w-4xl bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 space-y-6">
           <div className="text-center space-y-2">
             <motion.div
